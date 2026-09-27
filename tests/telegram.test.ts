@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as webhook } from "@/app/api/telegram/webhook/route";
+import { resetSearchState } from "@/lib/agents/search-agent";
 import {
   downloadFileAsDataUrl,
   handleTelegramUpdate,
@@ -59,6 +60,7 @@ function textUpdate(chatId: number, text: string, extra: Record<string, unknown>
 }
 
 beforeEach(() => {
+  resetSearchState();
   vi.stubEnv("TELEGRAM_BOT_TOKEN", TOKEN);
   vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", String(ADMIN));
   vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "");

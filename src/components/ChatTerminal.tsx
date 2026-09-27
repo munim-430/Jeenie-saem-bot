@@ -106,6 +106,8 @@ export function ChatTerminal({
 }: ChatTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  // Size of the log box as of the last resize callback (null until observed).
+  const boxRef = useRef<{ width: number; height: number } | null>(null);
   const [showJump, setShowJump] = useState(false);
 
   const scrollToEnd = useCallback((smooth: boolean) => {
@@ -117,6 +119,14 @@ export function ChatTerminal({
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
+    // A scroll fired by the box itself changing size (Chrome's scroll anchoring on
+    // rotation or a breakpoint switch) arrives before the resize callback; it is not
+    // the operator scrolling away, so keep the pin.
+    const box = boxRef.current;
+    if (box && (box.width !== el.clientWidth || box.height !== el.clientHeight)) {
+      if (stickRef.current) scrollToEnd(false);
+      return;
+    }
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD_PX;
     stickRef.current = nearBottom;
     setShowJump(!nearBottom);
@@ -126,6 +136,19 @@ export function ChatTerminal({
   useLayoutEffect(() => {
     if (stickRef.current && messages.length > 0) scrollToEnd(false);
   }, [messages, scrollToEnd]);
+
+  // Stay pinned when the log itself changes size (phone rotation, a layout
+  // breakpoint): a shorter box would otherwise leave the newest lines below the fold.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      boxRef.current = { width: el.clientWidth, height: el.clientHeight };
+      if (stickRef.current) scrollToEnd(false);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollToEnd]);
 
   // A new operator message always snaps back to the bottom.
   const lastUserId = [...messages].reverse().find((m) => m.role === "user")?.id;

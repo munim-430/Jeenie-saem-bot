@@ -4,6 +4,7 @@ import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeQuery, runOrchestrator, runOrchestratorToText } from "@/lib/agents/orchestrator";
+import { resetSearchState } from "@/lib/agents/search-agent";
 import { IMAGE_PLACEHOLDER } from "@/lib/agents/vision-agent";
 import type { ChatMessage } from "@/lib/types";
 
@@ -63,6 +64,7 @@ function stubSearch(instant: unknown = DDG_INSTANT) {
 }
 
 beforeEach(() => {
+  resetSearchState();
   for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
     vi.stubEnv(name, "");
   }
@@ -145,6 +147,26 @@ describe("offline mode (no LLM configured)", () => {
     for (const s of result.sources) expect(s.title.length).toBeLessThanOrEqual(80);
     expect(result.text).toContain("[1] Seoul");
     expect(result.text).toContain("https://en.wikipedia.org/wiki/Seoul");
+  });
+
+  it("says live search failed (not the generic offline line) when search comes back empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith("https://api.duckduckgo.com/")) return new Response(JSON.stringify({ RelatedTopics: [] }), { status: 202 });
+        return new Response('<div class="anomaly-modal__title">Unfortunately, bots use DuckDuckGo too.</div>', { status: 202 });
+      }),
+    );
+    const en = await runOrchestratorToText({ messages: [user("latest news about Seoul")] }, { trusted: false });
+    expect(en).toMatchObject({ agent: "offline", provider: "none", lang: "en", sources: [] });
+    expect(en.text).toContain("Live search came back empty");
+    expect(en.text).toContain("TAVILY_API_KEY");
+    expect(en.text).not.toContain("live search and Hangeul reports still work");
+
+    const ko = await runOrchestratorToText({ messages: [user("오늘 서울 날씨 어때?")] }, { trusted: false });
+    expect(ko).toMatchObject({ agent: "offline", lang: "ko" });
+    expect(ko.text).toContain("실시간 검색 결과를 받지 못했어요");
   });
 
   it("hangeul still works and returns the formatted mock report", async () => {

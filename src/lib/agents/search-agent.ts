@@ -86,8 +86,14 @@ export function decodeHtmlEntities(text: string): string {
   });
 }
 
+// Inline tags (DuckDuckGo bolds query words: "<b>Seoul</b>,") vanish without a
+// space so punctuation stays attached; any other tag separates words.
+const INLINE_TAG = /<\/?(?:a|b|strong|i|em|u|mark|span|wbr)\b[^>]*>/gi;
+
 function htmlToText(fragment: string): string {
-  return decodeHtmlEntities(fragment.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  return decodeHtmlEntities(fragment.replace(INLINE_TAG, "").replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function httpUrl(raw: string | undefined | null): URL | null {
@@ -281,29 +287,70 @@ function resolveDuckDuckGoHref(rawHref: string): string | null {
   return url.toString();
 }
 
-const DDG_TITLE = /<a\b([^>]*\bclass="[^"]*\bresult__a\b[^"]*"[^>]*)>([\s\S]*?)<\/a>/gi;
-const DDG_SNIPPET = /<(a|div|td|span)\b[^>]*\bclass="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/\1>/gi;
+/** Where one DuckDuckGo result page keeps titles, snippets, dates and ad markers. */
+interface DdgMarkup {
+  title: RegExp; // group 1: <a> attributes, group 2: title HTML
+  snippet: RegExp; // group 2: snippet HTML
+  date?: RegExp; // group 1: date text
+  /** True when the title at `index` belongs to an ad. */
+  isAd: (html: string, index: number, blockStart: number) => boolean;
+}
 
-/** html.duckduckgo.com result page → results (regex only; Edge has no DOM). Exported for tests. */
-export function parseDuckDuckGoHtml(html: string): SearchResult[] {
-  const titles = Array.from(html.matchAll(DDG_TITLE), (m) => ({
+// Class attributes are double-quoted on html.duckduckgo.com and single-quoted on lite.duckduckgo.com.
+const HTML_MARKUP: DdgMarkup = {
+  title: /<a\b([^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'][^>]*)>([\s\S]*?)<\/a>/gi,
+  snippet: /<(a|div|td|span)\b[^>]*\bclass=["'][^"']*\bresult__snippet\b[^"']*["'][^>]*>([\s\S]*?)<\/\1>/gi,
+  isAd: (html, index, blockStart) => /\bresult--ad\b/.test(html.slice(blockStart, index)),
+};
+
+const LITE_MARKUP: DdgMarkup = {
+  title: /<a\b([^>]*\bclass=["'][^"']*\bresult-link\b[^"']*["'][^>]*)>([\s\S]*?)<\/a>/gi,
+  snippet: /<(td|div|span)\b[^>]*\bclass=["'][^"']*\bresult-snippet\b[^"']*["'][^>]*>([\s\S]*?)<\/\1>/gi,
+  date: /<span\b[^>]*\bclass=["'][^"']*\btimestamp\b[^"']*["'][^>]*>([^<]*)<\/span>/gi,
+  // Sponsored rows are `<tr class="result-sponsored">`; only the title's own row decides.
+  isAd: (html, index) => {
+    const rowStart = html.lastIndexOf("<tr", index);
+    return rowStart !== -1 && /\bresult-sponsored\b/.test(html.slice(rowStart, html.indexOf(">", rowStart) + 1));
+  },
+};
+
+function parseDuckDuckGoPage(html: string, markup: DdgMarkup): SearchResult[] {
+  const titles = Array.from(html.matchAll(markup.title), (m) => ({
     index: m.index ?? 0,
     end: (m.index ?? 0) + m[0].length,
-    href: /\bhref="([^"]*)"/i.exec(m[1])?.[1] ?? "",
+    href: /\bhref=(["'])(.*?)\1/i.exec(m[1])?.[2] ?? "",
     title: htmlToText(m[2]),
   }));
-  const snippets = Array.from(html.matchAll(DDG_SNIPPET), (m) => ({ index: m.index ?? 0, text: htmlToText(m[2]) }));
+  const snippets = Array.from(html.matchAll(markup.snippet), (m) => ({ index: m.index ?? 0, text: htmlToText(m[2]) }));
+  const dates = markup.date
+    ? Array.from(html.matchAll(markup.date), (m) => ({ index: m.index ?? 0, text: m[1].trim() }))
+    : [];
 
   const results: SearchResult[] = [];
   titles.forEach((t, i) => {
     const blockStart = i === 0 ? Math.max(0, t.index - 600) : titles[i - 1].end;
-    if (/\bresult--ad\b/.test(html.slice(blockStart, t.index))) return;
+    if (markup.isAd(html, t.index, blockStart)) return;
     const nextIndex = titles[i + 1]?.index ?? Number.POSITIVE_INFINITY;
-    const snippet = snippets.find((s) => s.index > t.index && s.index < nextIndex)?.text ?? "";
-    const result = normalizeResult({ title: t.title, url: resolveDuckDuckGoHref(t.href), snippet }, "duckduckgo");
+    const inBlock = (item: { index: number }) => item.index > t.index && item.index < nextIndex;
+    const snippet = snippets.find(inBlock)?.text ?? "";
+    const publishedDate = dates.find(inBlock)?.text;
+    const result = normalizeResult(
+      { title: t.title, url: resolveDuckDuckGoHref(t.href), snippet, publishedDate },
+      "duckduckgo",
+    );
     if (result) results.push(result);
   });
   return results;
+}
+
+/** html.duckduckgo.com result page → results (regex only; Edge has no DOM). Exported for tests. */
+export function parseDuckDuckGoHtml(html: string): SearchResult[] {
+  return parseDuckDuckGoPage(html, HTML_MARKUP);
+}
+
+/** lite.duckduckgo.com result page → results. Exported for tests. */
+export function parseDuckDuckGoLite(html: string): SearchResult[] {
+  return parseDuckDuckGoPage(html, LITE_MARKUP);
 }
 
 async function duckDuckGoInstant(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
@@ -320,38 +367,63 @@ async function duckDuckGoInstant(query: string, signal: AbortSignal): Promise<Pr
   return parseDuckDuckGoInstantAnswer(data, query);
 }
 
-async function duckDuckGoHtml(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
-  try {
-    return await duckDuckGoHtmlOnce(query, signal);
-  } catch (error) {
-    // The challenge is served to a random share of requests; one retry usually gets through.
-    if (!(error instanceof ProviderError && error.message === "bot challenge") || signal.aborted) throw error;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    return duckDuckGoHtmlOnce(query, signal);
-  }
-}
+// DuckDuckGo rate-limits each result page separately: after a few quick queries
+// from one IP a page answers with a bot challenge for a minute or so, while the
+// other page still works. So fail over between them, and skip a page that just
+// challenged us instead of spending the next request on it.
+const DDG_PAGES = [
+  { id: "html", url: "https://html.duckduckgo.com/html/", form: { b: "" }, parse: parseDuckDuckGoHtml },
+  { id: "lite", url: "https://lite.duckduckgo.com/lite/", form: {}, parse: parseDuckDuckGoLite },
+] as const;
+const DDG_CHALLENGE_COOLDOWN_MS = 60_000;
+const ddgChallengedUntil = new Map<string, number>();
 
-async function duckDuckGoHtmlOnce(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
-  // POST: the GET form of this endpoint is answered with a bot challenge far more often.
-  const res = await fetch("https://html.duckduckgo.com/html/", {
+async function duckDuckGoPage(
+  page: (typeof DDG_PAGES)[number],
+  query: string,
+  signal: AbortSignal,
+): Promise<ProviderOutcome> {
+  // POST: the GET form of these pages is answered with a bot challenge far more often.
+  const res = await fetch(page.url, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       accept: "text/html,application/xhtml+xml",
       "accept-language": "en-US,en;q=0.9,ko;q=0.8",
       "user-agent": BROWSER_USER_AGENT,
-      referer: "https://html.duckduckgo.com/",
+      referer: page.url,
     },
-    body: new URLSearchParams({ q: query, b: "" }).toString(),
+    body: new URLSearchParams({ q: query, ...page.form }).toString(),
     signal,
   });
   await ensureOk(res);
   const html = await res.text();
-  const results = parseDuckDuckGoHtml(html);
+  const results = page.parse(html);
   if (results.length === 0 && /anomaly-modal|bots use DuckDuckGo/i.test(html)) {
+    ddgChallengedUntil.set(page.id, Date.now() + DDG_CHALLENGE_COOLDOWN_MS);
     throw new ProviderError("bot challenge");
   }
   return { results };
+}
+
+async function duckDuckGoResultPages(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
+  const now = Date.now();
+  const cooling = (id: string) => (ddgChallengedUntil.get(id) ?? 0) > now;
+  // Pages that are not cooling down go first; a cooling page is still tried last.
+  const pages = [...DDG_PAGES].sort((a, b) => Number(cooling(a.id)) - Number(cooling(b.id)));
+  let lastError: unknown = null;
+  for (const page of pages) {
+    if (signal.aborted) break;
+    try {
+      const outcome = await duckDuckGoPage(page, query, signal);
+      if (outcome.results.length > 0) return outcome;
+      lastError = new ProviderError("no results");
+    } catch (error) {
+      if (signal.aborted) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError ?? new ProviderError("aborted");
 }
 
 function duckDuckGo(): ProviderRun {
@@ -365,7 +437,7 @@ function duckDuckGo(): ProviderRun {
       instantError = error;
     }
     try {
-      return await duckDuckGoHtml(query, signal);
+      return await duckDuckGoResultPages(query, signal);
     } catch (error) {
       if (instantError && !signal.aborted) throw new ProviderError(`${describeError(instantError)}; html ${describeError(error)}`);
       throw error;
@@ -399,14 +471,49 @@ export interface WebSearchOptions {
   providerTimeoutMs?: number;
 }
 
+// Successful searches are reused for a few minutes (per server instance): the
+// same question asked twice, or by the HUD and Telegram, should not spend
+// provider quota or DuckDuckGo's per-IP rate limit again.
+const CACHE_TTL_MS = 5 * 60_000;
+const CACHE_MAX_ENTRIES = 100;
+const searchCache = new Map<string, { expires: number; response: SearchResponse }>();
+
+function readCache(key: string): SearchResponse | null {
+  const entry = searchCache.get(key);
+  if (!entry) return null;
+  if (entry.expires <= Date.now()) {
+    searchCache.delete(key);
+    return null;
+  }
+  return { ...entry.response, results: entry.response.results.map((r) => ({ ...r })) };
+}
+
+function writeCache(key: string, response: SearchResponse): void {
+  searchCache.delete(key);
+  searchCache.set(key, { expires: Date.now() + CACHE_TTL_MS, response });
+  // Map keeps insertion order, so the first key is the oldest entry.
+  while (searchCache.size > CACHE_MAX_ENTRIES) searchCache.delete(searchCache.keys().next().value as string);
+}
+
+/** Forgets cached results and DuckDuckGo cooldowns (process-local state; used by tests). */
+export function resetSearchState(): void {
+  searchCache.clear();
+  ddgChallengedUntil.clear();
+}
+
 /** Runs the provider chain; never throws. Each provider gets 8 s before the next one is tried. */
 export async function webSearch(query: string, options: WebSearchOptions = {}): Promise<SearchResponse> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_CHARS);
   const maxResults = Math.min(10, Math.max(1, Math.floor(options.maxResults ?? 5)));
   if (!q) return { query: q, provider: "none", results: [], error: "Empty search query." };
 
+  const chain = providerChain(getEnv());
+  const cacheKey = `${chain.map((p) => p.id).join(",")}|${maxResults}|${q.toLowerCase()}`;
+  const cached = readCache(cacheKey);
+  if (cached) return cached;
+
   const failures: string[] = [];
-  for (const { id, run } of providerChain(getEnv())) {
+  for (const { id, run } of chain) {
     if (options.signal?.aborted) break;
     try {
       const outcome = await run(q, maxResults, withTimeout(options.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, options.signal));
@@ -414,6 +521,7 @@ export async function webSearch(query: string, options: WebSearchOptions = {}): 
       if (results.length > 0 || outcome.answer) {
         const response: SearchResponse = { query: q, provider: id, results };
         if (outcome.answer) response.answer = truncate(outcome.answer, 1000);
+        writeCache(cacheKey, response);
         return response;
       }
       failures.push(`${id}: no results`);

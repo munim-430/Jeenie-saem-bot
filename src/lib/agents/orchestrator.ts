@@ -73,6 +73,15 @@ export function offlineMessage(lang: ResolvedLang, kind: "text" | "vision" = "te
   );
 }
 
+/** No LLM and the live search came back empty: the generic offline line would claim search works. */
+export function offlineSearchFailedMessage(lang: ResolvedLang): string {
+  return localized(
+    lang,
+    "Live search came back empty just now (the keyless search fallback is probably rate-limiting me), and no language model is connected to answer from memory. Try again in a minute. For reliable answers, set TAVILY_API_KEY for search and OPENAI_API_KEY (or OLLAMA_BASE_URL) for the language model.",
+    "방금 실시간 검색 결과를 받지 못했어요 (키 없이 쓰는 검색이 잠시 요청을 제한하고 있는 것 같아요). 기억만으로 답할 언어 모델도 연결되어 있지 않아요. 1분쯤 뒤에 다시 시도해 주세요. 안정적으로 쓰려면 검색용 TAVILY_API_KEY와 언어 모델용 OPENAI_API_KEY(또는 OLLAMA_BASE_URL)를 설정해 주세요.",
+  );
+}
+
 function unreachableLine(lang: ResolvedLang): string {
   return localized(
     lang,
@@ -351,7 +360,10 @@ function runVision(turn: Turn): OrchestratorResult {
 
 function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): OrchestratorResult {
   const resolved = resolveModel("text", turn.ctx);
-  if (!resolved) return fixed("offline", turn.lang, offlineMessage(turn.lang));
+  if (!resolved) {
+    const text = options.searchFailed ? offlineSearchFailedMessage(turn.lang) : offlineMessage(turn.lang);
+    return fixed("offline", turn.lang, text);
+  }
 
   // Tool calling is reliable on OpenAI; many Ollama models ignore or garble tools.
   const useTools = resolved.provider === "openai" && !options.searchFailed;

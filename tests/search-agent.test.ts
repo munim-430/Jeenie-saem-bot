@@ -6,6 +6,8 @@ import {
   needsLiveSearch,
   parseDuckDuckGoHtml,
   parseDuckDuckGoInstantAnswer,
+  parseDuckDuckGoLite,
+  resetSearchState,
   webSearch,
 } from "@/lib/agents/search-agent";
 import type { SearchResult, SourceLink } from "@/lib/types";
@@ -60,6 +62,41 @@ const DDG_HTML = `
   </div>
 </div></div>`;
 
+// Trimmed from a real lite.duckduckgo.com response (single-quoted classes, table rows), plus a sponsored row.
+const DDG_LITE = `
+<table border="0">
+  <tr class="result-sponsored">
+    <td valign="top">1.&nbsp;</td>
+    <td><a rel="nofollow" href="https://duckduckgo.com/y.js?ad_domain=ads.example&amp;u3=x" class='result-link'>Sponsored forecast app</a></td>
+  </tr>
+  <tr class="result-sponsored"><td>&nbsp;</td><td class='result-snippet'>Install now</td></tr>
+  <tr>
+    <td valign="top">2.&nbsp;</td>
+    <td><a rel="nofollow" href="https://www.accuweather.com/en/kr/seoul/226081/weather-forecast/226081" class='result-link'>Seoul, Seoul, South Korea Weather Forecast | AccuWeather</a></td>
+  </tr>
+  <tr>
+    <td>&nbsp;&nbsp;&nbsp;</td>
+    <td class='result-snippet'>
+      <b>Seoul</b>, <b>Seoul</b>, South Korea <b>Weather</b> Forecast, with current conditions &amp; more.
+    </td>
+  </tr>
+  <tr>
+    <td>&nbsp;&nbsp;&nbsp;</td>
+    <td>
+      <span class='link-text'>www.accuweather.com/en/kr/seoul/226081/weather-forecast/226081</span>
+      <span class='timestamp'>2026-09-27T00:00:00.0000000</span>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">3.&nbsp;</td>
+    <td><a rel="nofollow" href="https://www.bbc.com/weather/1835848" class='result-link'>Seoul - BBC Weather</a></td>
+  </tr>
+  <tr>
+    <td>&nbsp;&nbsp;&nbsp;</td>
+    <td class='result-snippet'>14-day <b>weather</b> forecast for <b>Seoul</b>.</td>
+  </tr>
+</table>`;
+
 const DDG_ANOMALY_HTML = `<form id="challenge-form"><div class="anomaly-modal__title">Unfortunately, bots use DuckDuckGo too.</div></form>`;
 
 const DDG_INSTANT = {
@@ -92,6 +129,7 @@ const DDG_INSTANT = {
 const EMPTY_INSTANT = { Heading: "", Answer: "", AbstractText: "", AbstractURL: "", Results: [], RelatedTopics: [] };
 
 beforeEach(() => {
+  resetSearchState();
   vi.stubEnv("TAVILY_API_KEY", "");
   vi.stubEnv("GOOGLE_CSE_API_KEY", "");
   vi.stubEnv("GOOGLE_CSE_ID", "");
@@ -152,6 +190,21 @@ describe("DuckDuckGo parsing", () => {
     expect(results[1].title).toBe("CBS News | today's latest headlines");
     expect(results[1].snippet).toBe("CBS News offers breaking coverage.");
     expect(results[2].snippet).toBe("");
+  });
+
+  it("parses the lite endpoint: skips sponsored rows, pairs snippets and dates", () => {
+    const results = parseDuckDuckGoLite(DDG_LITE);
+    expect(results).toEqual([
+      {
+        title: "Seoul, Seoul, South Korea Weather Forecast | AccuWeather",
+        url: "https://www.accuweather.com/en/kr/seoul/226081/weather-forecast/226081",
+        snippet: "Seoul, Seoul, South Korea Weather Forecast, with current conditions & more.",
+        source: "duckduckgo",
+        publishedDate: "2026-09-27T00:00:00.0000000",
+      },
+      { title: "Seoul - BBC Weather", url: "https://www.bbc.com/weather/1835848", snippet: "14-day weather forecast for Seoul.", source: "duckduckgo" },
+    ]);
+    expect(parseDuckDuckGoLite(DDG_ANOMALY_HTML)).toEqual([]);
   });
 
   it("parses instant answers including nested topics and skips category pages", () => {
@@ -264,17 +317,57 @@ describe("webSearch provider chain", () => {
     expect(res.results.map((r) => r.url)).toEqual(["https://www.cnn.com/", "https://www.cbsnews.com/latest/"]);
   });
 
-  it("retries the HTML endpoint once after a bot challenge", async () => {
-    let htmlCalls = 0;
-    mockFetch((url) => {
+  it("fails over to the lite endpoint after a bot challenge and skips the challenged page for a minute", async () => {
+    const pages: string[] = [];
+    mockFetch((url, init) => {
       if (url.hostname === "api.duckduckgo.com") return new Response(JSON.stringify(EMPTY_INSTANT), { status: 202 });
-      htmlCalls++;
-      return new Response(htmlCalls === 1 ? DDG_ANOMALY_HTML : DDG_HTML, { status: htmlCalls === 1 ? 202 : 200 });
+      pages.push(url.hostname);
+      expect(init?.method).toBe("POST");
+      if (url.hostname === "html.duckduckgo.com") return new Response(DDG_ANOMALY_HTML, { status: 202 });
+      expect(url.href).toBe("https://lite.duckduckgo.com/lite/");
+      return new Response(DDG_LITE, { status: 200, headers: { "content-type": "text/html" } });
     });
-    const res = await webSearch("who won the last world cup");
-    expect(htmlCalls).toBe(2);
-    expect(res.provider).toBe("duckduckgo");
-    expect(res.results).toHaveLength(3);
+
+    const first = await webSearch("seoul weather tomorrow");
+    expect(first.provider).toBe("duckduckgo");
+    expect(first.results.map((r) => r.url)).toEqual([
+      "https://www.accuweather.com/en/kr/seoul/226081/weather-forecast/226081",
+      "https://www.bbc.com/weather/1835848",
+    ]);
+    expect(pages).toEqual(["html.duckduckgo.com", "lite.duckduckgo.com"]);
+
+    // The HTML page is cooling down after its challenge, so the next search goes straight to lite.
+    await webSearch("busan weather tomorrow");
+    expect(pages).toEqual(["html.duckduckgo.com", "lite.duckduckgo.com", "lite.duckduckgo.com"]);
+  });
+
+  it("reuses a successful search for the same query instead of calling providers again", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url.hostname === "api.duckduckgo.com") return new Response(JSON.stringify(DDG_INSTANT), { status: 202 });
+      throw new Error(`unexpected ${url.href}`);
+    });
+    const first = await webSearch("Seoul");
+    const second = await webSearch("  seoul ");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second.results).toEqual(first.results);
+    // A different result count is a different search.
+    await webSearch("Seoul", { maxResults: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache failures", async () => {
+    let calls = 0;
+    mockFetch((url) => {
+      calls++;
+      if (url.hostname === "api.duckduckgo.com") return new Response(JSON.stringify(EMPTY_INSTANT), { status: 202 });
+      return new Response(DDG_ANOMALY_HTML, { status: 202 });
+    });
+    const first = await webSearch("no luck");
+    const callsAfterFirst = calls;
+    const second = await webSearch("no luck");
+    expect(first.provider).toBe("none");
+    expect(second.provider).toBe("none");
+    expect(calls).toBeGreaterThan(callsAfterFirst);
   });
 
   it("reports an error when every provider fails (bot challenge, HTTP errors, network)", async () => {

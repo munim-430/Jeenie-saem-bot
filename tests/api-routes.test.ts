@@ -3,6 +3,7 @@ import { POST as chat } from "@/app/api/chat/route";
 import { GET as hangeulGet, POST as hangeulPost } from "@/app/api/hangeul/route";
 import { GET as searchGet, POST as searchPost } from "@/app/api/search/route";
 import { GET as status } from "@/app/api/status/route";
+import { resetSearchState } from "@/lib/agents/search-agent";
 import type { ChatMessage, HangeulReport, SearchResponse, SourceLink, SystemStatus } from "@/lib/types";
 import { decodeHeaderJson } from "@/lib/utils";
 
@@ -74,6 +75,7 @@ function stubFetch() {
 }
 
 beforeEach(() => {
+  resetSearchState();
   for (const name of ENV_NAMES) vi.stubEnv(name, "");
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
