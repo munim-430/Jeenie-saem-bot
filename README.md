@@ -164,3 +164,9 @@ The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `
 `/grill-me`, `/tdd`, `/to-spec`, and `/diagnosing-bugs`, for Claude Code sessions in this repo. Run
 `/setup-matt-pocock-skills` once to configure them. Attribution is in
 [`.claude/skills/THIRD_PARTY_NOTICES.md`](.claude/skills/THIRD_PARTY_NOTICES.md).
+
+The [Vercel plugin](https://github.com/vercel/vercel-plugin) (`vercel@claude-plugins-official`) is enabled at
+project scope in `.claude/settings.json`. It adds Vercel, Next.js, and AI SDK skills, `/vercel:deploy`,
+`/vercel:env` and `/vercel:status`, and the Vercel MCP server. Claude Code offers to install it when you open this repo.
+It sends anonymous usage telemetry (a daily ping plus the names of its own skills). To turn that off, set
+`VERCEL_PLUGIN_TELEMETRY=off`.
