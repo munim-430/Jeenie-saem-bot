@@ -31,7 +31,7 @@ function withElevenLabs(extra: Record<string, string> = {}) {
   setEnv({ ELEVENLABS_API_KEY: API_KEY, ELEVENLABS_VOICE_ID: "voice/abc", ...extra });
 }
 
-function audioResponse(bytes: Uint8Array, status = 200) {
+function audioResponse(bytes: Uint8Array<ArrayBuffer>, status = 200) {
   return new Response(bytes, { status, headers: { "content-type": "audio/mpeg" } });
 }
 
