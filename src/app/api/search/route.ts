@@ -31,7 +31,7 @@ export async function GET(req: Request): Promise<Response> {
   });
   if (!parsed.success) return badRequest(parsed.error);
 
-  return jsonResponse(await webSearch(parsed.data.query, { maxResults: parsed.data.maxResults, signal: req.signal }));
+  return search(parsed.data.query, parsed.data.maxResults, req);
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -47,5 +47,15 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = postSchema.safeParse(raw);
   if (!parsed.success) return badRequest(parsed.error);
 
-  return jsonResponse(await webSearch(parsed.data.query, { maxResults: parsed.data.maxResults, signal: req.signal }));
+  return search(parsed.data.query, parsed.data.maxResults, req);
+}
+
+async function search(query: string, maxResults: number | undefined, req: Request): Promise<Response> {
+  try {
+    return jsonResponse(await webSearch(query, { maxResults, signal: req.signal }));
+  } catch (error) {
+    const name = error instanceof Error ? error.name : typeof error;
+    console.error(`[jeannie] /api/search failed: ${name}`);
+    return errorResponse(500, "search_failed", `Live search failed (${name}).`);
+  }
 }
