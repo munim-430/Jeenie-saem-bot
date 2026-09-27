@@ -546,3 +546,49 @@ describe.skipIf(!process.env.LIVE_SEARCH)("DuckDuckGo live", () => {
     else expect(res.results.length).toBeGreaterThan(0);
   }, 20_000);
 });
+
+// Vercel's Edge runtime differs from Next's local sandbox: the request signal
+// comes from the host and AbortSignal.any may reject it, and DOMException is
+// not guaranteed to be a global. Either used to make webSearch throw (HTTP 500).
+describe("webSearch on Edge-like runtimes", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("still searches when AbortSignal.any rejects the caller's signal", async () => {
+    vi.spyOn(AbortSignal, "any").mockImplementation(() => {
+      throw new TypeError("The provided value is not of type 'AbortSignal'");
+    });
+    mockFetch(() => json({ answer: "Sunny", results: [{ title: "Seoul weather", url: "https://w.example/seoul", content: "21°C" }] }));
+    vi.stubEnv("TAVILY_API_KEY", TAVILY_KEY);
+
+    const res = await webSearch("seoul weather", { signal: new AbortController().signal });
+
+    expect(res.provider).toBe("tavily");
+    expect(res.results).toHaveLength(1);
+  });
+
+  it("forwards the caller's abort when AbortSignal.any is unusable", async () => {
+    vi.spyOn(AbortSignal, "any").mockImplementation(() => {
+      throw new TypeError("not an AbortSignal");
+    });
+    const { withTimeout } = await import("@/lib/agents/search-agent");
+    const parent = new AbortController();
+    const signal = withTimeout(60_000, parent.signal);
+    parent.abort(new Error("client left"));
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("never throws when DOMException is missing and a provider fails oddly", async () => {
+    vi.stubGlobal("DOMException", undefined);
+    mockFetch(() => {
+      throw new TypeError("fetch failed");
+    });
+
+    const res = await webSearch("seoul weather", { providerTimeoutMs: 500 });
+
+    expect(res.provider).toBe("none");
+    expect(res.results).toEqual([]);
+    expect(res.error).toContain("duckduckgo: network error (TypeError)");
+  });
+});

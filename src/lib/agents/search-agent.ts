@@ -16,15 +16,30 @@ const MAX_SNIPPET_CHARS = 500;
 export const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-/** Signal that fires after `ms` or when `parent` aborts (AbortSignal.any is missing on some runtimes). */
+/**
+ * Signal that fires after `ms` or when `parent` aborts. Never throws: AbortSignal.any
+ * is missing on some runtimes and rejects a request signal created by the host
+ * (Vercel's Edge runtime), in which case the parent is forwarded by hand or, if
+ * even that fails, only the timeout applies.
+ */
 export function withTimeout(ms: number, parent?: AbortSignal | null): AbortSignal {
   const timeout = AbortSignal.timeout(ms);
   if (!parent) return timeout;
-  if (typeof AbortSignal.any === "function") return AbortSignal.any([parent, timeout]);
+  if (typeof AbortSignal.any === "function") {
+    try {
+      return AbortSignal.any([parent, timeout]);
+    } catch {
+      // Fall through to manual forwarding.
+    }
+  }
   const controller = new AbortController();
   const forward = (source: AbortSignal) => () => controller.abort(source.reason);
-  if (parent.aborted) controller.abort(parent.reason);
-  parent.addEventListener("abort", forward(parent), { once: true });
+  try {
+    if (parent.aborted) controller.abort(parent.reason);
+    parent.addEventListener("abort", forward(parent), { once: true });
+  } catch {
+    return timeout;
+  }
   timeout.addEventListener("abort", forward(timeout), { once: true });
   return controller.signal;
 }
@@ -521,11 +536,21 @@ function providerChain(env: JeannieEnv): Array<{ id: SearchProvider; run: Provid
 /** Short, secret-free reason (fetch errors can embed request URLs, which hold API keys). */
 function describeError(error: unknown): string {
   if (error instanceof ProviderError) return error.message;
-  if (error instanceof DOMException || (error instanceof Error && /Abort|Timeout/.test(error.name))) {
-    return (error as Error).name === "TimeoutError" ? "timed out" : "aborted";
+  // Name-based on purpose: DOMException is not a global on every Edge runtime,
+  // and a throw from here would escape webSearch's provider loop.
+  const name = errorName(error);
+  if (name === "TimeoutError") return "timed out";
+  if (name === "AbortError") return "aborted";
+  if (name === "SyntaxError") return "invalid response";
+  return `network error (${name})`;
+}
+
+function errorName(error: unknown): string {
+  try {
+    return typeof error === "object" && error !== null && "name" in error ? String(error.name) : typeof error;
+  } catch {
+    return "unknown";
   }
-  if (error instanceof SyntaxError) return "invalid response";
-  return "network error";
 }
 
 export interface WebSearchOptions {
@@ -567,6 +592,17 @@ export function resetSearchState(): void {
 
 /** Runs the provider chain; never throws. Each provider gets 8 s before the next one is tried. */
 export async function webSearch(query: string, options: WebSearchOptions = {}): Promise<SearchResponse> {
+  try {
+    return await runProviderChain(query, options);
+  } catch (error) {
+    // Last line of defence so routes and agents always get a SearchResponse.
+    const q = typeof query === "string" ? query.trim().slice(0, MAX_QUERY_CHARS) : "";
+    console.error(`[jeannie] web search failed unexpectedly: ${errorName(error)}`);
+    return { query: q, provider: "none", results: [], error: `Search failed unexpectedly (${errorName(error)}).` };
+  }
+}
+
+async function runProviderChain(query: string, options: WebSearchOptions): Promise<SearchResponse> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_CHARS);
   const maxResults = Math.min(10, Math.max(1, Math.floor(options.maxResults ?? 5)));
   if (!q) return { query: q, provider: "none", results: [], error: "Empty search query." };
