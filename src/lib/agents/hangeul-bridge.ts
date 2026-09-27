@@ -12,21 +12,22 @@ const MAX_METRICS = 20;
 const MAX_HIGHLIGHTS = 10;
 
 // ─── Routing ────────────────────────────────────────────────────────────────
-// "Hangeul" alone is also the Korean alphabet ("teach me hangeul"), so it only
-// routes here together with an admin/portal cue.
+// "Hangeul"/한글 alone is also the Korean alphabet ("teach me hangeul",
+// "한글로 보고서 써줘"), so it only routes here next to an admin/portal cue.
 
 const EN_HANGEUL_CUES: RegExp[] = [
-  /\b(?:admin|daily|hangeul)\s+(?:reports?|briefing|summary|status|dashboard)\b/i,
-  /\bhangeul\s+(?:portal|admin|academy|institute|school|cent(?:er|re)|system|server|site|website|backend|metrics|stats|numbers|students|enrol{1,2}ments?|attendance|payments?|classes|operations)\b/i,
-  /\b(?:portal|admin|dashboard|report|status)\b[\s\S]*\bhangeul\b/i,
-  /\bhangeul\b[\s\S]*\b(?:portal|report|status|online|offline|up|down)\b/i,
+  /\b(?:admin|daily)\s+reports?\b/i,
+  /\bhangeul(?:'s)?\s+(?:(?:daily|admin|today'?s)\s+)?(?:reports?|briefing|summary|status|dashboard|portal|admin|academy|institute|school|system|server|site|website|backend|metrics|stats|numbers|students|enrol{1,2}ments?|attendance|payments?|operations)\b/i,
+  /\b(?:portal|admin|dashboard)\b[\s\S]{0,40}\bhangeul\b|\bhangeul\b[\s\S]{0,40}\b(?:portal|admin|dashboard)\b/i,
+  /\b(?:report|status|numbers|metrics|stats)\s+(?:from|of|for)\s+(?:the\s+)?hangeul\b/i,
+  /\bis\s+(?:the\s+)?hangeul\b[\s\S]{0,30}\b(?:up|down|online|offline)\b/i,
+  /\b(?:check|ping)\s+(?:on\s+)?(?:the\s+)?hangeul\b/i,
   /\bhangeul\.com\b/i,
-  /\b(?:check|ping)\s+(?:the\s+)?hangeul\b/i,
 ];
 
 const KO_HANGEUL_CUES: RegExp[] = [
-  /한글\s*(?:포털|관리자|어드민|리포트|보고서|현황|학원|시스템|서버|사이트|대시보드)/,
-  /한글[\s\S]*(?:보고서|리포트|현황)/,
+  /한글\s*(?:포털|관리자|어드민|리포트|보고서|현황|시스템|서버|사이트|대시보드)/,
+  /한글\s*학원\s*(?:보고서|리포트|현황|상태|관리)/,
   /(?:관리자|어드민)\s*(?:리포트|보고서|현황|페이지)/,
   /(?:일일|데일리)\s*(?:리포트|보고서)/,
 ];
@@ -38,7 +39,9 @@ export function isHangeulQuery(text: string): boolean {
 
 /** Health-check wording ("is the portal up?", "한글 포털 상태") rather than a report request. */
 export function isHangeulStatusQuery(text: string): boolean {
-  return /\b(?:status|online|offline|up|down|ping|health|reachable|working)\b|상태|접속|작동|정상|다운/i.test(text);
+  return /\b(?:status|online|offline|ping|health|healthy|reachable|uptime)\b|\b(?:up|down)\s*(?:right now|now)?\s*\??\s*$|상태|접속|작동|정상|다운/i.test(
+    text,
+  );
 }
 
 // ─── Deterministic demo data ────────────────────────────────────────────────
@@ -200,6 +203,10 @@ async function fetchPortal(path: string, signal?: AbortSignal | null): Promise<{
 async function readJson(res: Response): Promise<unknown> {
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
+    // Status 0 is an opaque redirect on runtimes that hide `redirect: "manual"` responses.
+    if (res.status === 0 || (res.status >= 300 && res.status < 400)) {
+      throw new BridgeError("portal redirected instead of returning JSON (check the endpoint path)");
+    }
     throw new BridgeError(`portal answered HTTP ${res.status}`);
   }
   return JSON.parse(await res.text()) as unknown;

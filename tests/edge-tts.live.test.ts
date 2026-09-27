@@ -1,6 +1,8 @@
 // Real synthesis against speech.platform.bing.com. Opt-in:
 //   LIVE_EDGE_TTS=1 npx vitest run tests/edge-tts.live.test.ts
 // Optional: LIVE_EDGE_TTS_OUT=<dir> saves tts-sample-en.mp3 / tts-sample-ko.mp3 there.
+// Optional: LIVE_EDGE_TTS_VIA_PROXY=1 tunnels through HTTPS_PROXY (egress-restricted CI).
+// By default it connects directly, exactly like the production route.
 
 import { writeFileSync } from "node:fs";
 import http from "node:http";
@@ -47,8 +49,10 @@ class ConnectTunnelAgent extends https.Agent {
 }
 
 function proxyAgent(): https.Agent | undefined {
+  if (!process.env.LIVE_EDGE_TTS_VIA_PROXY) return undefined;
   const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
-  return proxy ? new ConnectTunnelAgent(new URL(proxy)) : undefined;
+  if (!proxy) throw new Error("LIVE_EDGE_TTS_VIA_PROXY is set but HTTPS_PROXY is not.");
+  return new ConnectTunnelAgent(new URL(proxy));
 }
 
 function looksLikeMp3(bytes: Uint8Array): boolean {
