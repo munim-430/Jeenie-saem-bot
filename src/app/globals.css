@@ -1,0 +1,453 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   Jeannie HUD · "Pink Overdrive"
+   void #0A050A / #120712 · neon #FF007F / #FF1493 / #FF69B4
+   petal #F472B6 / #FBCFE8 · glow rgba(255, 0, 127, 0.4)
+   ───────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --void: #0a050a;
+    --void-800: #120712;
+    --neon: #ff007f;
+    --neon-deep: #ff1493;
+    --neon-hot: #ff69b4;
+    --petal: #f472b6;
+    --petal-soft: #fbcfe8;
+    --glow: rgba(255, 0, 127, 0.4);
+    --panel: rgba(18, 7, 18, 0.72);
+    --bracket: #ff69b4;
+  }
+
+  html {
+    background-color: var(--void);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    /* Layered over the bg-void colour: two soft pink nebulae behind everything. */
+    background-image:
+      radial-gradient(ellipse 70% 55% at 50% 38%, rgba(255, 0, 127, 0.14), transparent 70%),
+      radial-gradient(ellipse 45% 40% at 8% 100%, rgba(255, 20, 147, 0.1), transparent 70%),
+      radial-gradient(ellipse 40% 35% at 100% 0%, rgba(244, 114, 182, 0.08), transparent 70%);
+    background-attachment: fixed;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Faint tactical grid, fading out toward the edges. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 0, 127, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 0, 127, 0.055) 1px, transparent 1px);
+    background-size: 44px 44px;
+    background-position: center center;
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, #000 20%, transparent 85%);
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, #000 20%, transparent 85%);
+  }
+
+  /* CRT scanlines over the whole HUD. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.022) 0,
+      rgba(255, 255, 255, 0.022) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode: overlay;
+  }
+
+  ::selection {
+    background: rgba(255, 0, 127, 0.45);
+    color: #fff;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 0, 127, 0.55) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(255, 0, 127, 0.7), rgba(255, 105, 180, 0.45));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #ff007f, #ff69b4);
+    background-clip: padding-box;
+  }
+
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--neon-hot);
+    outline-offset: 2px;
+    box-shadow:
+      0 0 0 4px rgba(255, 0, 127, 0.22),
+      0 0 18px rgba(255, 0, 127, 0.55);
+  }
+
+  button,
+  [role="button"],
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input,
+  textarea {
+    caret-color: var(--neon-hot);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(251, 207, 232, 0.42);
+  }
+}
+
+@layer components {
+  /* Translucent HUD panel with inner glow and four corner brackets. */
+  .hud-panel {
+    position: relative;
+    isolation: isolate;
+    background: linear-gradient(180deg, rgba(255, 0, 127, 0.05), transparent 38%), var(--panel);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid rgba(255, 0, 127, 0.4);
+    border-radius: 6px;
+    box-shadow:
+      inset 0 0 24px rgba(255, 0, 127, 0.12),
+      inset 0 1px 0 rgba(255, 105, 180, 0.12),
+      0 0 28px rgba(255, 0, 127, 0.08);
+  }
+  .hud-panel::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: 7px;
+    --len: 14px;
+    --thick: 2px;
+    background:
+      linear-gradient(var(--bracket), var(--bracket)) top left / var(--len) var(--thick),
+      linear-gradient(var(--bracket), var(--bracket)) top left / var(--thick) var(--len),
+      linear-gradient(var(--bracket), var(--bracket)) top right / var(--len) var(--thick),
+      linear-gradient(var(--bracket), var(--bracket)) top right / var(--thick) var(--len),
+      linear-gradient(var(--bracket), var(--bracket)) bottom left / var(--len) var(--thick),
+      linear-gradient(var(--bracket), var(--bracket)) bottom left / var(--thick) var(--len),
+      linear-gradient(var(--bracket), var(--bracket)) bottom right / var(--len) var(--thick),
+      linear-gradient(var(--bracket), var(--bracket)) bottom right / var(--thick) var(--len);
+    background-repeat: no-repeat;
+    filter: drop-shadow(0 0 4px rgba(255, 0, 127, 0.8));
+  }
+
+  .hud-title {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--neon-hot);
+  }
+
+  .hud-label {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.625rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(251, 207, 232, 0.62);
+  }
+
+  .hud-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 0, 127, 0.55), transparent);
+  }
+
+  .text-glow {
+    text-shadow:
+      0 0 6px rgba(255, 0, 127, 0.85),
+      0 0 22px rgba(255, 0, 127, 0.45);
+  }
+  .text-glow-soft {
+    text-shadow: 0 0 10px rgba(255, 0, 127, 0.45);
+  }
+
+  /* Icon / control button. min 40px touch target. */
+  .hud-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 0, 127, 0.35);
+    background: rgba(255, 0, 127, 0.06);
+    color: var(--petal-soft);
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      color 160ms ease,
+      transform 120ms ease;
+  }
+  .hud-btn:hover:not(:disabled) {
+    border-color: rgba(255, 105, 180, 0.8);
+    background: rgba(255, 0, 127, 0.14);
+    box-shadow: 0 0 14px rgba(255, 0, 127, 0.35);
+    color: #fff;
+  }
+  .hud-btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .hud-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .hud-btn[data-active="true"] {
+    border-color: var(--neon);
+    background: rgba(255, 0, 127, 0.22);
+    color: #fff;
+    box-shadow:
+      0 0 16px rgba(255, 0, 127, 0.55),
+      inset 0 0 10px rgba(255, 0, 127, 0.35);
+  }
+
+  .hud-btn-primary {
+    border-color: var(--neon);
+    background: linear-gradient(135deg, #ff007f, #ff1493 60%, #ff69b4);
+    color: #fff;
+    box-shadow: 0 0 18px rgba(255, 0, 127, 0.5);
+  }
+  .hud-btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #ff1493, #ff69b4);
+    box-shadow: 0 0 26px rgba(255, 0, 127, 0.75);
+  }
+
+  .hud-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 40px;
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 0, 127, 0.35);
+    background: rgba(255, 0, 127, 0.07);
+    font-size: 0.78rem;
+    color: var(--petal-soft);
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .hud-chip:hover {
+    border-color: var(--neon-hot);
+    background: rgba(255, 0, 127, 0.16);
+    box-shadow: 0 0 14px rgba(255, 0, 127, 0.35);
+  }
+
+  .hud-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 0, 127, 0.3);
+    background: rgba(255, 0, 127, 0.06);
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(251, 207, 232, 0.85);
+    white-space: nowrap;
+  }
+
+  /* Status LEDs. */
+  .led {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 999px;
+    background: rgba(251, 207, 232, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(251, 207, 232, 0.25);
+  }
+  .led-on {
+    background: var(--neon);
+    box-shadow:
+      0 0 6px var(--neon),
+      0 0 14px rgba(255, 0, 127, 0.7);
+    animation: led-pulse 2.4s ease-in-out infinite;
+  }
+  .led-warn {
+    background: #fbbf24;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+  }
+  .led-idle {
+    background: var(--petal);
+    box-shadow: 0 0 6px rgba(244, 114, 182, 0.6);
+  }
+
+  .hud-input {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 0, 127, 0.35);
+    background: rgba(10, 5, 10, 0.7);
+    color: var(--petal-soft);
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .hud-input:focus-visible,
+  .hud-input:focus {
+    outline: none;
+    border-color: var(--neon-hot);
+    box-shadow:
+      0 0 0 3px rgba(255, 0, 127, 0.18),
+      0 0 18px rgba(255, 0, 127, 0.35);
+  }
+
+  .streaming-cursor {
+    display: inline-block;
+    width: 0.55em;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: var(--neon);
+    box-shadow: 0 0 8px var(--neon);
+    animation: cursor-blink 1s steps(2, start) infinite;
+  }
+
+  /* Camera reticle + scan line. */
+  .scan-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--neon-hot), transparent);
+    box-shadow: 0 0 16px 2px rgba(255, 0, 127, 0.7);
+    animation: scan-sweep 2.6s ease-in-out infinite;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+  }
+  .touch-hold {
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .pad-safe {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+}
+
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes scan-sweep {
+  0% {
+    top: 4%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  50% {
+    top: 94%;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 4%;
+    opacity: 0;
+  }
+}
+
+@keyframes hud-glitch {
+  0%,
+  92%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+  93% {
+    transform: translateX(1px) skewX(-6deg);
+    opacity: 0.85;
+  }
+  95% {
+    transform: translateX(-1px);
+    opacity: 0.95;
+  }
+}
+
+.animate-glitch {
+  animation: hud-glitch 6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .scan-line {
+    top: 50%;
+    opacity: 0.8;
+  }
+}
