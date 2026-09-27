@@ -39,6 +39,7 @@ export default function JeannieHud() {
   });
   const voiceOnRef = useRef(voiceOn);
   const attachmentRef = useRef(attachment);
+  const listeningRef = useRef(false);
 
   useEffect(() => {
     voiceOnRef.current = voiceOn;
@@ -56,7 +57,8 @@ export default function JeannieHud() {
     lang,
     onBeforeSend: speech.stop,
     onReplyComplete: (reply) => {
-      if (voiceOnRef.current) speech.speak(reply.text, reply.lang);
+      // Not while the mic is open: she would be transcribed into the operator's next message.
+      if (voiceOnRef.current && !listeningRef.current) speech.speak(reply.text, reply.lang);
     },
     onAccessKeyRequired: (rejected) => setKeyDialog({ open: true, reason: rejected ? "rejected" : "required" }),
   });
@@ -81,7 +83,6 @@ export default function JeannieHud() {
     },
   };
 
-  const listeningRef = useRef(false);
   useEffect(() => {
     listeningRef.current = recognition.listening;
   }, [recognition.listening]);
@@ -152,7 +153,8 @@ export default function JeannieHud() {
             className="order-1 h-[350px] sm:h-[420px] lg:order-2 lg:h-auto lg:min-h-0 lg:py-2"
             state={orbState}
             getLevel={getLevel}
-            analyser={speech.routed ? speech.analyser : null}
+            // The real spectrum only while server audio plays through it; the mic has no samples.
+            analyser={speech.speaking && speech.routed ? speech.analyser : null}
             activeAgent={chat.telemetry.activeAgent}
             provider={system.status?.llm.provider ?? chat.telemetry.provider}
             voiceEngine={speech.engine}
@@ -164,6 +166,7 @@ export default function JeannieHud() {
             className="order-2 h-[72svh] min-h-[460px] lg:order-3 lg:h-auto lg:min-h-0"
             messages={chat.messages}
             phase={chat.phase}
+            speaking={speech.speaking || speech.preparing}
             lang={lang}
             onLangChange={setLang}
             voiceOn={voiceOn}

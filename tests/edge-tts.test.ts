@@ -428,14 +428,19 @@ describe("synthesizeEdgeTts (local fake service)", () => {
     ).rejects.toMatchObject({ code: "no_audio" });
   });
 
+  // invalid_input means a bad voice/prosody setting; empty_text is the caller's text, so the
+  // engine can tell a configuration error from "nothing to say".
   it("rejects bad input before opening a socket", async () => {
     const service = await startFakeService();
     await expect(
       synthesizeEdgeTts({ text: "Hi.", voice: "Jenny", endpoint: service.endpoint }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      synthesizeEdgeTts({ text: " \u000B ", voice: "en-US-JennyNeural", endpoint: service.endpoint }),
+      synthesizeEdgeTts({ text: "Hi.", voice: "en-US-JennyNeural", pitch: "low", endpoint: service.endpoint }),
     ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(
+      synthesizeEdgeTts({ text: " \u000B\u0001 ", voice: "en-US-JennyNeural", endpoint: service.endpoint }),
+    ).rejects.toMatchObject({ code: "empty_text" });
     expect(service.handshakes).toHaveLength(0);
   });
 });

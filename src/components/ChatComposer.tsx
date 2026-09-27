@@ -25,6 +25,8 @@ export interface Attachment {
 
 interface ChatComposerProps {
   phase: ChatPhase;
+  /** Jeannie is reading a reply aloud (or fetching its voice): STOP then silences her. */
+  speaking: boolean;
   lang: LangMode;
   onLangChange: (lang: LangMode) => void;
   voiceOn: boolean;
@@ -40,9 +42,12 @@ interface ChatComposerProps {
 
 const HOLD_TO_TALK_MS = 450;
 const MAX_TEXTAREA_PX = 160;
+// SEND turns into STOP in the same spot; the second click of a double-click must not abort.
+const STOP_GUARD_MS = 400;
 
 export function ChatComposer({
   phase,
+  speaking,
   lang,
   onLangChange,
   voiceOn,
@@ -60,7 +65,11 @@ export function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pressRef = useRef<{ startedByPress: boolean; at: number }>({ startedByPress: false, at: 0 });
+  const sentAtRef = useRef(0);
   const busy = phase !== "idle";
+  const canSend = (draft.trim().length > 0 || attachment !== null) && !preparing;
+  // While she speaks, STOP silences her; typing a new message brings SEND back.
+  const showStop = busy || (speaking && !canSend);
 
   // Auto-grow the textarea up to a cap.
   useEffect(() => {
@@ -71,15 +80,28 @@ export function ChatComposer({
   }, [draft]);
 
   const submit = () => {
+    // Enter while an image is still being prepared would send without it.
+    if (!canSend) return;
     if (onSend(draft, attachment?.dataUrl ?? null)) {
+      sentAtRef.current = performance.now();
       setDraft("");
       onAttach(null);
     }
   };
 
+  const stop = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.detail > 1 || performance.now() - sentAtRef.current < STOP_GUARD_MS) return;
+    onStop();
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // IME-safe: Enter that confirms a Korean syllable composition must not send.
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape" && (busy || speaking)) {
+      event.preventDefault();
+      onStop();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submit();
@@ -125,7 +147,6 @@ export function ChatComposer({
     if (!pressRef.current.startedByPress) recognition.stop();
   };
 
-  const canSend = (draft.trim().length > 0 || attachment !== null) && !preparing;
   const micTitle = recognition.supported
     ? recognition.listening
       ? "Stop listening"
@@ -219,7 +240,8 @@ export function ChatComposer({
           rows={1}
           enterKeyHint="send"
           placeholder={lang === "ko" ? "지니에게 명령하세요…" : "Command Jeannie… · 지니에게 말하기"}
-          className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2.5 text-[0.92rem] leading-relaxed text-white outline-none focus-visible:shadow-none focus-visible:outline-none"
+          // 16px on phones: iOS Safari zooms into any smaller focused field.
+          className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2.5 text-base leading-relaxed text-white outline-none focus-visible:shadow-none focus-visible:outline-none sm:text-[0.92rem]"
         />
         <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
           <div className="flex items-center gap-1">
@@ -277,11 +299,11 @@ export function ChatComposer({
           <span className="hud-label hidden min-w-0 truncate xl:inline" aria-hidden="true">
             ↵ send · ⇧↵ newline
           </span>
-          {busy ? (
+          {showStop ? (
             <button
               type="button"
-              onClick={onStop}
-              aria-label="Stop the reply"
+              onClick={stop}
+              aria-label={busy ? "Stop the reply" : "Stop speaking"}
               title="Stop"
               className="hud-btn hud-btn-primary px-3"
             >

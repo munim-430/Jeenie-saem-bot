@@ -28,23 +28,41 @@ const TTS_TIMEOUT_MS = 30_000;
 const HANGEUL_TIMEOUT_MS = 15_000;
 
 // ── Access key storage ───────────────────────────────────────────────────────
-// Storage can throw (private mode, blocked site data), so every access is guarded.
+// Storage can throw (private mode, blocked site data), so every access is guarded,
+// and the key is also kept in memory: with storage blocked it still works until reload.
 
-export function readAccessKey(): string | null {
-  try {
-    const value = window.localStorage.getItem(ACCESS_KEY_STORAGE);
-    return value && value.trim() ? value.trim() : null;
-  } catch {
-    return null;
-  }
+/** Printable ASCII: a header value must be a ByteString, or fetch throws before sending. */
+const ACCESS_KEY_PATTERN = /^[\x20-\x7E]{1,256}$/;
+
+/** The key in use; `undefined` until the first read from storage. */
+let memoryKey: string | null | undefined;
+
+export function isValidAccessKey(key: string): boolean {
+  return ACCESS_KEY_PATTERN.test(key.trim());
 }
 
-export function writeAccessKey(key: string | null): void {
+export function readAccessKey(): string | null {
+  if (memoryKey !== undefined) return memoryKey;
+  if (typeof window === "undefined") return null;
+  let stored: string | null = null;
   try {
-    if (key && key.trim()) window.localStorage.setItem(ACCESS_KEY_STORAGE, key.trim());
+    stored = window.localStorage.getItem(ACCESS_KEY_STORAGE);
+  } catch {
+    stored = null;
+  }
+  memoryKey = stored && isValidAccessKey(stored) ? stored.trim() : null;
+  return memoryKey;
+}
+
+/** Stores a valid key (or clears it with null); an invalid key is ignored. */
+export function writeAccessKey(key: string | null): void {
+  if (key !== null && !isValidAccessKey(key)) return;
+  memoryKey = key === null ? null : key.trim();
+  try {
+    if (memoryKey) window.localStorage.setItem(ACCESS_KEY_STORAGE, memoryKey);
     else window.localStorage.removeItem(ACCESS_KEY_STORAGE);
   } catch {
-    // Not persisted; the key still works for requests made from memory this session.
+    // Not persisted: the in-memory copy serves this page until it is reloaded.
   }
 }
 
@@ -119,9 +137,9 @@ async function request(
   path: string,
   init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal; timeoutMs: number },
 ): Promise<Response> {
-  const headers = authHeaders(init.body === undefined ? undefined : { "content-type": "application/json" });
   let res: Response;
   try {
+    const headers = authHeaders(init.body === undefined ? undefined : { "content-type": "application/json" });
     res = await fetch(path, {
       method: init.method ?? "GET",
       headers,

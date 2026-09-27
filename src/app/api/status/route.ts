@@ -1,4 +1,5 @@
-import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured } from "@/lib/env";
+import { hangeulHudMode } from "@/lib/agents/hangeul-bridge";
+import { configuredSearchProviders, configuredTtsEngines, getEnv } from "@/lib/env";
 import type { SystemStatus } from "@/lib/types";
 import { jsonResponse } from "@/lib/utils";
 
@@ -22,7 +23,8 @@ export function GET(): Response {
     search: { providers: configuredSearchProviders(env) },
     voice: { engines: configuredTtsEngines(env) },
     telegram: { configured: Boolean(env.telegram.botToken) },
-    hangeul: { mode: hangeulLiveConfigured(env) ? "live" : "mock" },
+    // "live" only when the HUD really gets live data, which needs the access key.
+    hangeul: { mode: hangeulHudMode(env) },
     time: new Date().toISOString(),
   };
   return jsonResponse(status);

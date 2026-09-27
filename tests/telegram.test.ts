@@ -1,28 +1,76 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST as webhook } from "@/app/api/telegram/webhook/route";
+import { maxDuration, POST as webhook } from "@/app/api/telegram/webhook/route";
 import { resetSearchState } from "@/lib/agents/search-agent";
 import {
   downloadFileAsDataUrl,
   handleTelegramUpdate,
+  MAX_UPDATE_TEXT,
   notifyAdmin,
   sendMessage,
   splitMessage,
   TELEGRAM_CHUNK_SIZE,
+  UPDATE_DEADLINE_MS,
 } from "@/lib/telegram";
 
 const TOKEN = "123456:SECRET-bot-token";
 const ADMIN = 42;
 const STRANGER = 7;
+const FAILED = "Something went wrong on my side. Please try again.";
+const LOCKED = "private until TELEGRAM_ADMIN_CHAT_ID is set";
 
 interface ApiCall {
   method: string;
   payload: Record<string, unknown>;
 }
 
-/** Fake Telegram (and DuckDuckGo) backend; records Bot API calls. */
-function fakeTelegram(options: { fileSize?: number; filePath?: string; fileBytes?: number } = {}) {
+/** Rejects like fetch does once the request's signal aborts. */
+function hangUntilAborted(signal: AbortSignal | null | undefined): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    const fail = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+    if (signal?.aborted) fail();
+    else signal?.addEventListener("abort", fail, { once: true });
+  });
+}
+
+const sseChunk = (content: string) =>
+  `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "gpt-4o", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }] })}\n\n`;
+
+/** OpenAI streaming answer: `first` right away, then either the rest or silence until the signal aborts. */
+function openAiStream(first: string, signal: AbortSignal | null | undefined, finish: boolean): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(sseChunk(first)));
+      if (finish) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+      const fail = () => controller.error(signal?.reason ?? new DOMException("aborted", "AbortError"));
+      if (signal?.aborted) fail();
+      else signal?.addEventListener("abort", fail, { once: true });
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+interface FakeOptions {
+  fileSize?: number;
+  filePath?: string;
+  fileBytes?: number;
+  /** getFile never answers until the request is aborted. */
+  getFileHangs?: boolean;
+  /** getFile answers ok: false. */
+  getFileFails?: boolean;
+  /** OpenAI chat completions: "hang" never answers, "partial" streams one chunk then stalls, "answer" completes. */
+  openai?: "hang" | "partial" | "answer";
+}
+
+/** Fake Telegram (plus DuckDuckGo and OpenAI) backend; records Bot API calls. */
+function fakeTelegram(options: FakeOptions = {}) {
   const calls: ApiCall[] = [];
   const other: string[] = [];
+  const openaiRequests: { body: string; signal: AbortSignal | null | undefined }[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     const api = /^https:\/\/api\.telegram\.org\/bot([^/]+)\/(\w+)$/.exec(url);
@@ -31,6 +79,8 @@ function fakeTelegram(options: { fileSize?: number; filePath?: string; fileBytes
       const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       calls.push({ method: api[2], payload });
       if (api[2] === "getFile") {
+        if (options.getFileHangs) return hangUntilAborted(init?.signal);
+        if (options.getFileFails) return Response.json({ ok: false, description: "file is too big" }, { status: 400 });
         return Response.json({ ok: true, result: { file_path: options.filePath ?? "photos/file_9.jpg", file_size: options.fileSize ?? 2048 } });
       }
       return Response.json({ ok: true, result: api[2] === "sendMessage" ? { message_id: calls.length } : true });
@@ -39,6 +89,11 @@ function fakeTelegram(options: { fileSize?: number; filePath?: string; fileBytes
       return new Response(new Uint8Array(options.fileBytes ?? 16).fill(0xff), { status: 200 });
     }
     other.push(url);
+    if (url.startsWith("https://api.openai.com/")) {
+      openaiRequests.push({ body: String(init?.body ?? ""), signal: init?.signal });
+      if (options.openai === "hang") return hangUntilAborted(init?.signal);
+      return openAiStream("Once upon a time", init?.signal, options.openai !== "partial");
+    }
     if (url.startsWith("https://api.duckduckgo.com/")) {
       return new Response(
         JSON.stringify({ Heading: "Seoul", AbstractText: "Capital of Korea.", AbstractURL: "https://en.wikipedia.org/wiki/Seoul", RelatedTopics: [] }),
@@ -49,7 +104,7 @@ function fakeTelegram(options: { fileSize?: number; filePath?: string; fileBytes
   });
   vi.stubGlobal("fetch", fetchMock);
   const sent = () => calls.filter((c) => c.method === "sendMessage").map((c) => c.payload);
-  return { calls, other, sent, fetchMock };
+  return { calls, other, sent, fetchMock, openaiRequests };
 }
 
 function textUpdate(chatId: number, text: string, extra: Record<string, unknown> = {}) {
@@ -68,6 +123,8 @@ beforeEach(() => {
     vi.stubEnv(name, "");
   }
   for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE", "JEANNIE_ACCESS_KEY"]) vi.stubEnv(name, "");
+  // Unset, not blank: @ai-sdk/openai reads a blank OPENAI_BASE_URL itself and rejects it.
+  for (const name of ["OPENAI_BASE_URL", "DEFAULT_MODEL", "VERCEL"]) vi.stubEnv(name, undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
@@ -152,14 +209,39 @@ describe("handleTelegramUpdate", () => {
     expect(tg.calls.every((c) => c.payload.chat_id === STRANGER)).toBe(true);
   });
 
-  it("/whoami suggests TELEGRAM_ADMIN_CHAT_ID when none is set, and everyone is answered", async () => {
-    vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", "");
+  it("stays locked until TELEGRAM_ADMIN_CHAT_ID is set: only /start, /help and /whoami are answered", async () => {
+    vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", "your_chat_id"); // the .env.example placeholder counts as unset
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
+    vi.stubEnv("HANGEUL_USERNAME", "u");
+    vi.stubEnv("HANGEUL_PASSWORD", "p");
     const tg = fakeTelegram();
     await handleTelegramUpdate(textUpdate(STRANGER, "/whoami@JeannieBot"));
-    await handleTelegramUpdate(textUpdate(STRANGER, "switch off the fan"));
-    const [whoami, iot] = tg.sent().map((p) => String(p.text));
+    await handleTelegramUpdate(textUpdate(STRANGER, "/start"));
+    await handleTelegramUpdate(textUpdate(STRANGER, "/help"));
+    const [whoami, start, help] = tg.sent().map((p) => String(p.text));
     expect(whoami).toContain(`TELEGRAM_ADMIN_CHAT_ID=${STRANGER}`);
-    expect(iot).toBe("Yes, it is done.");
+    expect(start).toContain("I'm Jeannie");
+    expect(help).toContain("/report");
+
+    const locked = [
+      textUpdate(STRANGER, "write me a poem about the sea"),
+      textUpdate(STRANGER, "switch off the fan"),
+      textUpdate(STRANGER, "/report"),
+      textUpdate(STRANGER, "/status"),
+      textUpdate(STRANGER, "/search Seoul"),
+      textUpdate(STRANGER, "", { text: undefined, caption: "What is this?", photo: [{ file_id: "p", width: 90, height: 90, file_size: 1000 }] }),
+    ];
+    for (const update of locked) await handleTelegramUpdate(update);
+    const replies = tg.sent().slice(3).map((p) => String(p.text));
+    expect(replies).toHaveLength(locked.length);
+    for (const reply of replies) {
+      expect(reply).toContain(LOCKED);
+      expect(reply).toContain("TELEGRAM_ADMIN_CHAT_ID를 설정하기 전까지");
+    }
+    // No model, search, portal or file download was reached.
+    expect(tg.other).toEqual([]);
+    expect(tg.calls.some((c) => c.method === "getFile")).toBe(false);
   });
 
   it("handles /start, /help, /status (no secrets) and unknown commands", async () => {
@@ -187,11 +269,26 @@ describe("handleTelegramUpdate", () => {
     // The portal mock answers 500, so the admin sees the labelled fallback.
     expect(String(tg.sent()[0].text)).toContain("Live portal request failed (portal answered HTTP 500)");
 
-    vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", "");
-    const open = fakeTelegram();
+    const stranger = fakeTelegram();
     await handleTelegramUpdate(textUpdate(STRANGER, "/report"));
-    expect(open.other).toEqual([]);
-    expect(String(open.sent()[0].text)).toContain("only shared with trusted callers");
+    expect(stranger.other).toEqual([]);
+    expect(String(stranger.sent()[0].text)).toContain("This Jeannie instance is private.");
+  });
+
+  it("/status calls Hangeul live only when the HUD gets live data too", async () => {
+    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
+    vi.stubEnv("HANGEUL_USERNAME", "u");
+    vi.stubEnv("HANGEUL_PASSWORD", "p");
+    const tg = fakeTelegram();
+    await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
+    vi.stubEnv("JEANNIE_ACCESS_KEY", "hud-key");
+    await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
+    vi.stubEnv("HANGEUL_PASSWORD", "");
+    await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
+    const [noKey, withKey, noPortal] = tg.sent().map((p) => String(p.text));
+    expect(noKey).toContain("• Hangeul portal: demo data in the HUD until JEANNIE_ACCESS_KEY is set (/report here is live)");
+    expect(withKey).toContain("• Hangeul portal: live\n");
+    expect(noPortal).toContain("• Hangeul portal: demo data\n");
   });
 
   it("/search returns numbered results and asks for a query when empty", async () => {
@@ -230,6 +327,50 @@ describe("handleTelegramUpdate", () => {
     expect(String(tg.sent()[0].text)).toMatch(/vision-capable model/);
   });
 
+  it("answers an IoT caption on an image with the fixed sentence before any lookup or download", async () => {
+    const tg = fakeTelegram();
+    await handleTelegramUpdate(
+      textUpdate(ADMIN, "", {
+        text: undefined,
+        caption: "Turn off the lights",
+        document: { file_id: "doc", mime_type: "image/png", file_size: 6_000_000 },
+      }),
+    );
+    await handleTelegramUpdate(
+      textUpdate(ADMIN, "", { text: undefined, caption: "Turn off the lights", photo: [{ file_id: "p", width: 90, height: 90, file_size: 1000 }] }),
+    );
+    const failing = fakeTelegram({ getFileFails: true });
+    await handleTelegramUpdate(
+      textUpdate(ADMIN, "", { text: undefined, caption: "불 꺼줘", photo: [{ file_id: "p", width: 90, height: 90, file_size: 1000 }] }),
+    );
+    expect(tg.sent().map((p) => p.text)).toEqual(["Yes, it is done.", "Yes, it is done."]);
+    expect(failing.sent().map((p) => p.text)).toEqual(["네, 처리되었습니다."]);
+    for (const fake of [tg, failing]) {
+      expect(fake.calls.map((c) => c.method)).toEqual(fake === tg ? ["sendMessage", "sendMessage"] : ["sendMessage"]);
+      expect(fake.other).toEqual([]);
+    }
+  });
+
+  it("caps text at Telegram's 4,096-character limit before anything reads it", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    const tg = fakeTelegram({ openai: "answer" });
+    const kept = `Write a haiku about ${"a".repeat(MAX_UPDATE_TEXT - 20)}`;
+    expect(kept).toHaveLength(MAX_UPDATE_TEXT);
+    await handleTelegramUpdate(textUpdate(ADMIN, `${kept}${"Q".repeat(50_000)}`));
+    expect(tg.openaiRequests).toHaveLength(1);
+    expect(tg.openaiRequests[0].body).toContain(kept);
+    expect(tg.openaiRequests[0].body).not.toContain("QQQQ");
+    expect(tg.sent().map((p) => p.text)).toEqual(["Once upon a time"]);
+  });
+
+  it("answers a 20,000-character whitespace attack in the admin chat quickly", async () => {
+    const tg = fakeTelegram();
+    const started = performance.now();
+    await handleTelegramUpdate(textUpdate(ADMIN, `hangeul portal up${"\n".repeat(20_000)}.`));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(String(tg.sent()[0].text)).toContain("Hangeul portal: online (demo)");
+  });
+
   it("rejects photos over 4 MB without downloading", async () => {
     const tg = fakeTelegram();
     await handleTelegramUpdate(
@@ -237,6 +378,43 @@ describe("handleTelegramUpdate", () => {
     );
     expect(tg.calls.some((c) => c.method === "getFile")).toBe(false);
     expect(String(tg.sent()[0].text)).toContain("larger than 4 MB");
+  });
+
+  it("keeps the per-update deadline under the webhook's maxDuration", () => {
+    expect(UPDATE_DEADLINE_MS).toBeGreaterThanOrEqual(45_000);
+    expect(UPDATE_DEADLINE_MS).toBeLessThanOrEqual(maxDuration * 1000 - 10_000);
+  });
+
+  it("sends the failure text once when the model does not answer before the deadline", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    const tg = fakeTelegram({ openai: "hang" });
+    const started = performance.now();
+    await handleTelegramUpdate(textUpdate(ADMIN, "Write me a long bedtime story about a fox"), { deadline: AbortSignal.timeout(100) });
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(tg.sent().map((p) => p.text)).toEqual([expect.stringContaining(FAILED)]);
+    // The deadline reached the model request itself.
+    expect(tg.openaiRequests.length).toBeGreaterThan(0);
+    expect(tg.openaiRequests.every((r) => r.signal?.aborted)).toBe(true);
+  });
+
+  it("keeps a partial answer and says it was cut off at the deadline", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    const tg = fakeTelegram({ openai: "partial" });
+    await handleTelegramUpdate(textUpdate(ADMIN, "Write me a long bedtime story about a fox"), { deadline: AbortSignal.timeout(150) });
+    const replies = tg.sent().map((p) => String(p.text));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatch(/^Once upon a time\n\n\(Cut off: that took too long/);
+    expect(replies[0]).not.toContain(FAILED);
+  });
+
+  it("aborts a stalled image download at the deadline and sends the failure text once", async () => {
+    const tg = fakeTelegram({ getFileHangs: true });
+    await handleTelegramUpdate(
+      textUpdate(ADMIN, "", { text: undefined, caption: "What does this say?", photo: [{ file_id: "p", width: 90, height: 90, file_size: 1000 }] }),
+      { deadline: AbortSignal.timeout(100) },
+    );
+    expect(tg.calls.some((c) => c.method === "getFile")).toBe(true);
+    expect(tg.sent().map((p) => p.text)).toEqual([expect.stringContaining(FAILED)]);
   });
 
   it("ignores non-message updates and bot authors", async () => {
@@ -259,26 +437,50 @@ describe("webhook route", () => {
       }),
     );
 
-  it("checks the secret token when configured", async () => {
+  const SECRET = { "x-telegram-bot-api-secret-token": "hook-secret" };
+
+  it.each([
+    ["locally", ""],
+    ["on Vercel", "1"],
+  ])("refuses every update without TELEGRAM_WEBHOOK_SECRET (%s)", async (_label, vercel) => {
+    vi.stubEnv("VERCEL", vercel);
+    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
+    vi.stubEnv("HANGEUL_USERNAME", "u");
+    vi.stubEnv("HANGEUL_PASSWORD", "p");
+    const tg = fakeTelegram();
+    // A forged update claiming to come from the admin chat.
+    const attempts: Record<string, string>[] = [{}, { "x-telegram-bot-api-secret-token": "anything" }];
+    for (const headers of attempts) {
+      const res = await post(textUpdate(ADMIN, "/report"), headers);
+      expect(res.status).toBe(503);
+      expect((await res.json()).code).toBe("telegram_webhook_secret_required");
+    }
+    expect(tg.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("checks the secret token", async () => {
     vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "hook-secret");
     const tg = fakeTelegram();
     expect((await post(textUpdate(ADMIN, "turn on the lights"))).status).toBe(401);
     expect((await post(textUpdate(ADMIN, "turn on the lights"), { "x-telegram-bot-api-secret-token": "wrong" })).status).toBe(401);
     expect(tg.fetchMock).not.toHaveBeenCalled();
 
-    const ok = await post(textUpdate(ADMIN, "turn on the lights"), { "x-telegram-bot-api-secret-token": "hook-secret" });
+    const ok = await post(textUpdate(ADMIN, "turn on the lights"), SECRET);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ ok: true });
     expect(tg.sent()[0].text).toBe("Yes, it is done.");
   });
 
   it("503 without a bot token, 400 on bad JSON, 200 even when handling fails", async () => {
+    vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "hook-secret");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "");
-    expect((await post(textUpdate(ADMIN, "hi"))).status).toBe(503);
+    const missing = await post(textUpdate(ADMIN, "hi"), SECRET);
+    expect(missing.status).toBe(503);
+    expect((await missing.json()).code).toBe("telegram_not_configured");
 
     vi.stubEnv("TELEGRAM_BOT_TOKEN", TOKEN);
     fakeTelegram();
-    expect((await post("{not json")).status).toBe(400);
+    expect((await post("{not json", SECRET)).status).toBe(400);
 
     vi.stubGlobal(
       "fetch",
@@ -286,7 +488,7 @@ describe("webhook route", () => {
         throw new Error("telegram down");
       }),
     );
-    const res = await post(textUpdate(ADMIN, "turn on the lights"));
+    const res = await post(textUpdate(ADMIN, "turn on the lights"), SECRET);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });

@@ -4,10 +4,10 @@
 // The returned stream never errors: provider failures become a short line in
 // the user's language. Runs on Edge and Node.js.
 
-import { isStepCount, streamText, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { generateText, isStepCount, streamText, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { getEnv } from "../env";
 import type { AgentId, ChatMessage, LangMode, LlmProvider, ResolvedLang, SourceLink } from "../types";
-import { resolveLanguage } from "../utils";
+import { resolveLanguage, truncate } from "../utils";
 import {
   formatHangeulReport,
   formatHangeulStatus,
@@ -19,16 +19,31 @@ import {
 import { checkIoTQuery, IOT_RESPONSE } from "./iot-interceptor";
 import { getLanguageModel, type ResolvedModel } from "./llm";
 import { buildSystemPrompt } from "./persona";
-import { createSearchTool, formatSearchBriefing, needsLiveSearch, toSourceLinks, webSearch } from "./search-agent";
+import {
+  contextualSearchQuery,
+  createSearchTool,
+  formatSearchBriefing,
+  isFollowUp,
+  isSearchFollowUp,
+  needsLiveSearch,
+  toSourceLinks,
+  webSearch,
+  withTimeout,
+} from "./search-agent";
 import { toModelMessages } from "./vision-agent";
 
 const HISTORY_LIMIT = 20;
-// The routing heuristic also fires on chatty messages ("rough day today"), so
-// let the model drop results that do not fit instead of forcing citations.
+// The routing heuristic can still fire on a chatty message, so let the model
+// drop results that do not fit instead of forcing citations.
 const SEARCH_RELEVANCE_NOTE =
   "If these results are not relevant to the user's latest message, ignore them and answer naturally without citations.";
 const MAX_TOOL_STEPS = 3;
 const MAX_SOURCES = 5;
+// Edge responses must start within 25 s, and the search runs before the first
+// byte, so the query rewrite and the provider chain share one budget.
+const SEARCH_BUDGET_MS = 20_000;
+const QUERY_REWRITE_TIMEOUT_MS = 4_000;
+const QUERY_REWRITE_TURNS = 6;
 
 // ─── Routing ────────────────────────────────────────────────────────────────
 
@@ -38,15 +53,37 @@ export interface RouteDecision {
   reason: string;
 }
 
-export function routeQuery(input: { text: string; hasImage: boolean; lang?: LangMode }): RouteDecision {
+// With an image attached, "summarize this daily report" or "이 보고서 번역해줘"
+// is about the image. The portal wins only when the text names it and does
+// not name a picture ("한글 포털 상태 확인해줘" + image is still a status check).
+const NAMES_HANGEUL_PORTAL =
+  /\bhangeul\b|\bportal\b|한글\s*(?:학원|포털|관리자|어드민|시스템|서버|사이트|대시보드|리포트|보고서|현황)|포털/i;
+const NAMES_IMAGE =
+  /\b(?:attached|attachment|screenshots?|screen\s+shots?|photos?|pictures?|images?|pics?|scans?|scanned)\b|사진|스크린샷|이미지|캡처|캡쳐|첨부/i;
+
+function portalOverImage(text: string): boolean {
+  return NAMES_HANGEUL_PORTAL.test(text) && !NAMES_IMAGE.test(text);
+}
+
+export function routeQuery(input: {
+  text: string;
+  hasImage: boolean;
+  lang?: LangMode;
+  /** Earlier user messages, oldest first: language for image-only turns, context for follow-ups. */
+  previous?: readonly string[];
+}): RouteDecision {
   const iot = checkIoTQuery(input.text, input.lang);
   if (iot !== null) {
     return { agent: "iot", lang: iot === IOT_RESPONSE.ko ? "ko" : "en", reason: "smart-home command or query" };
   }
-  const lang = resolveLanguage(input.lang, input.text);
-  if (isHangeulQuery(input.text)) return { agent: "hangeul", lang, reason: "Hangeul admin portal request" };
+  const previous = input.previous ?? [];
+  const lang = resolveLanguage(input.lang, input.text, previous);
+  if (isHangeulQuery(input.text) && (!input.hasImage || portalOverImage(input.text))) {
+    return { agent: "hangeul", lang, reason: "Hangeul admin portal request" };
+  }
   if (input.hasImage) return { agent: "vision", lang, reason: "image attached" };
   if (needsLiveSearch(input.text)) return { agent: "search", lang, reason: "time-sensitive or verifiable facts" };
+  if (isSearchFollowUp(input.text, previous)) return { agent: "search", lang, reason: "follow-up to a live search" };
   return { agent: "core", lang, reason: "general request" };
 }
 
@@ -152,6 +189,12 @@ interface GuardOptions {
   footer?: (answer: string) => string;
 }
 
+/** Blank line between the text of two tool-loop steps ("Let me check." / "Seoul is ..."). */
+function stepSeparator(answer: string): string {
+  if (answer.endsWith("\n\n")) return "";
+  return answer.endsWith("\n") ? "\n" : "\n\n";
+}
+
 /**
  * Model parts → UTF-8 text stream that never errors. `textStream` in the AI SDK
  * silently drops provider errors, so this reads `fullStream` and turns error or
@@ -160,6 +203,7 @@ interface GuardOptions {
 export function guardedTextStream(parts: AsyncIterable<StreamPart>, options: GuardOptions): ReadableStream<Uint8Array> {
   const iterator = parts[Symbol.asyncIterator]();
   let answer = "";
+  let newStep = false;
 
   const failureTail = () => {
     if (options.signal?.aborted) return "";
@@ -179,15 +223,22 @@ export function guardedTextStream(parts: AsyncIterable<StreamPart>, options: Gua
           const step = await iterator.next();
           if (step.done) {
             let tail = options.footer?.(answer) ?? "";
-            if (!answer) tail = options.signal?.aborted ? "" : (options.fallbackText ?? emptyAnswerLine(options.lang));
+            // Sources a tool call found are still worth showing when the model wrote nothing.
+            if (!answer) tail = options.signal?.aborted ? "" : (options.fallbackText ?? emptyAnswerLine(options.lang)) + tail;
             if (tail) controller.enqueue(encoder.encode(tail));
             controller.close();
             return;
           }
           const part = step.value;
+          if (part.type === "start-step") {
+            newStep = answer !== "";
+            continue;
+          }
           if (part.type === "text-delta" && typeof part.text === "string" && part.text) {
-            answer += part.text;
-            controller.enqueue(encoder.encode(part.text));
+            const text = newStep ? stepSeparator(answer) + part.text : part.text;
+            newStep = false;
+            answer += text;
+            controller.enqueue(encoder.encode(text));
             return;
           }
           if (part.type === "error" || part.type === "abort") {
@@ -237,6 +288,13 @@ function llmStream(options: {
       messages: options.messages,
       tools: options.tools,
       stopWhen: options.tools ? isStepCount(MAX_TOOL_STEPS) : undefined,
+      // The last allowed step must answer from the results it has; another
+      // tool call there would end the loop with no text. `toolChoice: "none"`
+      // (not `activeTools: []`) keeps the tool declared next to the earlier
+      // tool-call messages.
+      prepareStep: options.tools
+        ? ({ stepNumber }) => (stepNumber >= MAX_TOOL_STEPS - 1 ? { toolChoice: "none" } : undefined)
+        : undefined,
       abortSignal: options.signal ?? undefined,
       maxRetries: 1,
       timeout: { firstChunkMs: 45_000, chunkMs: 30_000 },
@@ -323,15 +381,62 @@ async function runHangeul(turn: Turn): Promise<OrchestratorResult> {
   return { agent: "hangeul", lang: turn.lang, provider: resolved.provider, sources: [], stream };
 }
 
+// "What's the population there?" may lean on the conversation without being short.
+const REFERS_BACK =
+  /\b(?:it|its|that|those|these|they|them|their|there|then|he|him|his|she|her)\b|그거|그것|거기|그곳|그때|그분|걔|(?<![가-힯])그\s+(?:사람|회사|팀|영화|경기|제품|나라|도시)/i;
+
+const QUERY_REWRITE_SYSTEM =
+  "Rewrite the user's latest message as one standalone web search query. Use the earlier turns only to resolve what it refers to (places, dates, names, 'it', 'there', 그럼, 내일은?). Keep the user's language. Reply with the query only: no quotes, no explanation.";
+
+function cleanRewrite(raw: string): string | null {
+  const line = raw.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  const query = line
+    .replace(/^(?:search\s+query|query|검색어)\s*[:：]\s*/i, "")
+    .replace(/^["'“‘「]+|["'”’」]+$/g, "")
+    .trim();
+  return query && query.length <= 300 ? query : null;
+}
+
+/**
+ * The query to search for. The latest message alone when it stands on its
+ * own; for a follow-up the model rewrites it with the recent turns, and the
+ * heuristic (earlier question + follow-up) covers no model or a failed call.
+ */
+async function searchQueryFor(turn: Turn, resolved: ResolvedModel | null, signal: AbortSignal): Promise<string> {
+  const previous = earlierUserTexts(turn.history);
+  const fallback = contextualSearchQuery(turn.text, previous);
+  if (!resolved || previous.length === 0 || !(isFollowUp(turn.text) || REFERS_BACK.test(turn.text))) return fallback;
+
+  const transcript = turn.history
+    .slice(-QUERY_REWRITE_TURNS)
+    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${truncate(m.content.replace(/\s+/g, " ").trim(), 400)}`)
+    .join("\n");
+  try {
+    const { text } = await generateText({
+      model: resolved.model,
+      system: QUERY_REWRITE_SYSTEM,
+      prompt: `${transcript}\n\nStandalone search query:`,
+      maxOutputTokens: 60,
+      maxRetries: 0,
+      abortSignal: withTimeout(QUERY_REWRITE_TIMEOUT_MS, signal),
+    });
+    return cleanRewrite(text) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function runSearch(turn: Turn): Promise<OrchestratorResult> {
-  const res = await webSearch(turn.text, { maxResults: MAX_SOURCES, signal: turn.ctx.signal });
+  const resolved = resolveModel("text", turn.ctx);
+  const budget = withTimeout(SEARCH_BUDGET_MS, turn.ctx.signal);
+  const query = await searchQueryFor(turn, resolved, budget);
+  const res = await webSearch(query, { maxResults: MAX_SOURCES, signal: budget });
   if (res.results.length === 0 && !res.answer) return runCore(turn, { searchFailed: true });
 
   const sources = toSourceLinks(res.results, MAX_SOURCES);
   const briefing = formatSearchBriefing(res);
   const plain = offlineSearchText(briefing, turn.lang);
 
-  const resolved = resolveModel("text", turn.ctx);
   if (!resolved) return fixed("search", turn.lang, plain, sources);
 
   const stream = llmStream({
@@ -387,6 +492,11 @@ function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Orchestr
   return { agent: "core", lang: turn.lang, provider: resolved.provider, sources: [], stream };
 }
 
+/** Text of the user turns before the latest one, oldest first. */
+function earlierUserTexts(history: ChatMessage[]): string[] {
+  return history.slice(0, -1).flatMap((m) => (m.role === "user" ? [m.content] : []));
+}
+
 /** History up to the latest user turn, capped, without empty turns. */
 function prepareHistory(messages: ChatMessage[]): ChatMessage[] {
   let lastUser = messages.length - 1;
@@ -400,7 +510,7 @@ export async function runOrchestrator(input: OrchestratorInput, ctx: Orchestrato
   const last = history.at(-1);
   const text = last?.role === "user" ? last.content : "";
   const image = input.image ?? (last?.role === "user" ? last.image : null) ?? null;
-  const route = routeQuery({ text, hasImage: Boolean(image), lang: input.lang });
+  const route = routeQuery({ text, hasImage: Boolean(image), lang: input.lang, previous: earlierUserTexts(history) });
 
   if (route.agent === "iot") {
     // Hard rule: fixed sentence, no network, no LLM.

@@ -24,6 +24,29 @@ describe("language detection", () => {
     expect(detectLanguage("Can you explain the word 사랑 in a long English sentence?")).toBe("en");
   });
 
+  it.each([
+    "React useEffect 설명해줘",
+    "JavaScript Promise 설명해줘",
+    "Next.js App Router 사용법",
+    "iPhone 15 Pro Max 가격 알려줘",
+    "Samsung Galaxy S24 Ultra 리뷰 보여줘",
+    "The Great Gatsby 줄거리 알려줘",
+    "Call on Me 가사 알려줘",
+  ])("reads Korean with English terms as Korean: %j", (text) => {
+    expect(detectLanguage(text)).toBe("ko");
+    expect(resolveLanguage("auto", text)).toBe("ko");
+  });
+
+  it.each([
+    "Can you explain the word 사랑 in a long English sentence?",
+    "How do you say hello in Korean? 안녕하세요",
+    "What does 사랑해요 여보 mean?",
+    "Thank you is 감사합니다 in Korean.",
+    "I love this song: 봄날",
+  ])("reads English that mentions Korean as English: %j", (text) => {
+    expect(detectLanguage(text)).toBe("en");
+  });
+
   it("containsHangul sees jamo and syllables", () => {
     expect(containsHangul("ㅋㅋ")).toBe(true);
     expect(containsHangul("hello")).toBe(false);
@@ -37,6 +60,41 @@ describe("language detection", () => {
     expect(resolveLanguage(undefined, "hello")).toBe("en");
     expect(resolveLanguage("auto", "Answer bilingually: what is kimchi?")).toBe("bilingual");
     expect(resolveLanguage("auto", "영어와 한국어로 설명해줘")).toBe("bilingual");
+  });
+
+  it.each([
+    ["Explain photosynthesis in English and Korean", "bilingual"],
+    ["Explain photosynthesis in both English and Korean", "bilingual"],
+    ["광합성 한영으로 설명해줘", "bilingual"],
+    ["한/영 병기로 요약해줘", "bilingual"],
+    ["Answer in Korean: what is photosynthesis?", "ko"],
+    ["Please reply in Korean. What is kimchi?", "ko"],
+    ["Explain black holes in Korean", "ko"],
+    ["영어로 대답해줘: 광합성이 뭐야?", "en"],
+    ["영어로 설명해줘 광합성", "en"],
+    ["Respond in English: 김치가 뭐야?", "en"],
+    ["Tell me how to say thank you in Korean", "en"],
+    ["Explain how to say thank you in Korean", "en"],
+    ["한영사전 추천해줘", "ko"],
+    ["광합성 영어로 뭐야?", "ko"],
+  ])("honours a language request in auto mode: %j → %s", (text, lang) => {
+    expect(resolveLanguage("auto", text)).toBe(lang);
+    expect(resolveLanguage(undefined, text)).toBe(lang);
+  });
+
+  it("lets an explicit HUD mode win over a request in the message", () => {
+    expect(resolveLanguage("en", "Answer in Korean: what is kimchi?")).toBe("en");
+    expect(resolveLanguage("ko", "Explain photosynthesis in English and Korean")).toBe("ko");
+    expect(resolveLanguage("bilingual", "영어로 대답해줘")).toBe("bilingual");
+  });
+
+  it("takes the latest earlier turn with words for an empty or image-only turn", () => {
+    expect(resolveLanguage("auto", "", ["Hello", "사진 보낼게요"])).toBe("ko");
+    expect(resolveLanguage("auto", "📷", ["사진 보낼게요", "  "])).toBe("ko");
+    expect(resolveLanguage("auto", "https://example.com/cat.png", ["고양이 사진이야"])).toBe("ko");
+    expect(resolveLanguage("auto", "", ["사진 보낼게요", "Here it comes"])).toBe("en");
+    expect(resolveLanguage("auto", "")).toBe("en");
+    expect(resolveLanguage("auto", "안녕", ["Hello"])).toBe("ko");
   });
 });
 

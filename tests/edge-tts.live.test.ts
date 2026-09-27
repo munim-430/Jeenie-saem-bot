@@ -1,7 +1,8 @@
 // Real synthesis against speech.platform.bing.com. Opt-in:
 //   LIVE_EDGE_TTS=1 npx vitest run tests/edge-tts.live.test.ts
-// Optional: LIVE_EDGE_TTS_OUT=<dir> saves tts-sample-en.mp3 / tts-sample-ko.mp3 there.
-// Optional: LIVE_EDGE_TTS_VIA_PROXY=1 tunnels through HTTPS_PROXY (egress-restricted CI).
+// Optional: LIVE_EDGE_TTS_OUT=<dir> saves tts-sample-{en,ko,mixed}.mp3 there.
+// Optional: LIVE_EDGE_TTS_VIA_PROXY=1 tunnels through HTTPS_PROXY (egress-restricted CI);
+// the synthesizeSpeech cases then skip, because the route has no proxy agent.
 // By default it connects directly, exactly like the production route.
 
 import { writeFileSync } from "node:fs";
@@ -10,8 +11,9 @@ import https from "node:https";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { synthesizeEdgeTts } from "@/lib/agents/edge-tts";
+import { DEFAULT_EDGE_VOICE_MIXED, synthesizeSpeech, TtsInputError } from "@/lib/agents/tts-engine";
 
 type ConnectCallback = (error: Error | null, socket?: Duplex) => void;
 
@@ -61,6 +63,11 @@ function looksLikeMp3(bytes: Uint8Array): boolean {
   return id3 || frameSync;
 }
 
+// The service streams 48 kbps CBR MP3, so 6000 bytes are one second of speech.
+const BYTES_PER_SECOND = 6000;
+const MIXED_TEXT = "Thank you is 감사합니다 in Korean.";
+const ENGLISH_PART = "Thank you is in Korean.";
+
 function save(name: string, bytes: Uint8Array) {
   const dir = process.env.LIVE_EDGE_TTS_OUT;
   if (dir) writeFileSync(join(dir, name), bytes);
@@ -89,5 +96,46 @@ describe.skipIf(!process.env.LIVE_EDGE_TTS)("Edge TTS (live)", () => {
     expect(audio.byteLength).toBeGreaterThan(2048);
     expect(looksLikeMp3(audio)).toBe(true);
     save("tts-sample-ko.mp3", audio);
+  }, 30_000);
+
+  // English-only voices (JennyNeural) render MIXED_TEXT exactly as long as ENGLISH_PART:
+  // the Korean word is dropped. The mixed voice must add real speech for it.
+  it("speaks the Korean word inside an English sentence with the mixed voice", async () => {
+    const mixed = await synthesizeEdgeTts({ text: MIXED_TEXT, voice: DEFAULT_EDGE_VOICE_MIXED, agent });
+    const englishOnly = await synthesizeEdgeTts({ text: ENGLISH_PART, voice: DEFAULT_EDGE_VOICE_MIXED, agent });
+    expect(looksLikeMp3(mixed)).toBe(true);
+    expect(mixed.byteLength - englishOnly.byteLength).toBeGreaterThan(0.5 * BYTES_PER_SECOND);
+    save("tts-sample-mixed.mp3", mixed);
+  }, 30_000);
+});
+
+describe.skipIf(!process.env.LIVE_EDGE_TTS || process.env.LIVE_EDGE_TTS_VIA_PROXY)("synthesizeSpeech on Edge (live)", () => {
+  beforeEach(() => {
+    for (const name of ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "EDGE_TTS_VOICE_EN", "EDGE_TTS_VOICE_KO", "EDGE_TTS_VOICE_MIXED"]) {
+      vi.stubEnv(name, "");
+    }
+    vi.stubEnv("EDGE_TTS_ENABLED", "true");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps Korean words in an English reply (lang en)", async () => {
+    const mixed = await synthesizeSpeech({ text: MIXED_TEXT, lang: "en" });
+    const englishOnly = await synthesizeSpeech({ text: ENGLISH_PART, lang: "en" });
+    expect(mixed.engine).toBe("edge");
+    expect(mixed.audio.byteLength - englishOnly.audio.byteLength).toBeGreaterThan(0.5 * BYTES_PER_SECOND);
+  }, 30_000);
+
+  it("speaks Korean-only text sent with lang en instead of failing", async () => {
+    const result = await synthesizeSpeech({ text: "감사합니다.", lang: "en" });
+    expect(result.audio.byteLength).toBeGreaterThan(2048);
+  }, 30_000);
+
+  it("rejects text the voice cannot say as nothing to speak", async () => {
+    await expect(synthesizeSpeech({ text: "..." })).rejects.toBeInstanceOf(TtsInputError);
+    // Letters, so it reaches the service, which ends the turn without audio.
+    await expect(synthesizeSpeech({ text: "ㅋㅋㅋ" })).rejects.toBeInstanceOf(TtsInputError);
   }, 30_000);
 });

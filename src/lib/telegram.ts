@@ -3,10 +3,11 @@
 // Telegram's markup parser. The bot token lives in request URLs, so errors are
 // logged by method name and status only.
 
-import { formatHangeulReport, getHangeulReport } from "./agents/hangeul-bridge";
+import { formatHangeulReport, getHangeulReport, hangeulHudMode } from "./agents/hangeul-bridge";
+import { checkIoTQuery } from "./agents/iot-interceptor";
 import { runOrchestratorToText } from "./agents/orchestrator";
-import { formatSearchBriefing, webSearch } from "./agents/search-agent";
-import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured } from "./env";
+import { formatSearchBriefing, webSearch, withTimeout } from "./agents/search-agent";
+import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured, type JeannieEnv } from "./env";
 import type { LangMode, SourceLink } from "./types";
 import { truncate } from "./utils";
 
@@ -15,6 +16,14 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 15_000;
 export const TELEGRAM_CHUNK_SIZE = 4000; // Telegram's hard limit is 4096 characters
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+/** Longest text or caption read from an update, Telegram's own message limit. */
+export const MAX_UPDATE_TEXT = 4096;
+/**
+ * End-to-end budget for one update. The webhook runs under maxDuration 60, so
+ * this leaves time to send the reply (or the failure line) before Vercel kills
+ * the function, returns 504 and makes Telegram redeliver the update.
+ */
+export const UPDATE_DEADLINE_MS = 50_000;
 
 // ─── Bot API types (only the fields we read) ────────────────────────────────
 
@@ -65,7 +74,11 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : "Error";
 }
 
-async function callApi<T>(method: string, payload: Record<string, unknown>): Promise<{ ok: true; result: T } | { ok: false }> {
+async function callApi<T>(
+  method: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<{ ok: true; result: T } | { ok: false }> {
   const token = getEnv().telegram.botToken;
   if (!token) return { ok: false };
   try {
@@ -73,7 +86,7 @@ async function callApi<T>(method: string, payload: Record<string, unknown>): Pro
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: withTimeout(REQUEST_TIMEOUT_MS, signal),
     });
     const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: T; description?: string } | null;
     if (!res.ok || !data?.ok) {
@@ -141,11 +154,11 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Downloads a Telegram image as a data URL; null when missing, not an image, or larger than 4 MB. */
-export async function downloadFileAsDataUrl(fileId: string): Promise<string | null> {
+/** Downloads a Telegram image as a data URL; null when missing, not an image, larger than 4 MB, or aborted. */
+export async function downloadFileAsDataUrl(fileId: string, signal?: AbortSignal): Promise<string | null> {
   const token = getEnv().telegram.botToken;
   if (!token) return null;
-  const file = await callApi<{ file_path?: string; file_size?: number }>("getFile", { file_id: fileId });
+  const file = await callApi<{ file_path?: string; file_size?: number }>("getFile", { file_id: fileId }, signal);
   if (!file.ok || !file.result.file_path) return null;
   if ((file.result.file_size ?? 0) > MAX_IMAGE_BYTES) return null;
 
@@ -155,7 +168,7 @@ export async function downloadFileAsDataUrl(fileId: string): Promise<string | nu
 
   try {
     const res = await fetch(`${TELEGRAM_API}/file/bot${token}/${file.result.file_path}`, {
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: withTimeout(DOWNLOAD_TIMEOUT_MS, signal),
     });
     if (!res.ok || Number(res.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES) {
       await res.body?.cancel().catch(() => undefined);
@@ -186,6 +199,10 @@ const pick = (lang: ReplyLang, en: string, ko: string) => (lang === "ko" ? ko : 
 
 const TEXT = {
   private: bilingual("This Jeannie instance is private.", "이 Jeannie는 비공개로 운영되고 있어요."),
+  locked: bilingual(
+    "This Jeannie instance stays private until TELEGRAM_ADMIN_CHAT_ID is set. Send /whoami to get the id to put there.",
+    "TELEGRAM_ADMIN_CHAT_ID를 설정하기 전까지 이 Jeannie는 비공개예요. /whoami 로 설정할 ID를 확인하세요.",
+  ),
   start: bilingual(
     "Hi, I'm Jeannie, your bilingual AI operator. Send me a message or a photo and I'll handle it. Type /help for commands.",
     "안녕하세요, 저는 Jeannie예요. 메시지나 사진을 보내 주시면 바로 처리할게요. 명령어는 /help 로 확인하세요.",
@@ -209,6 +226,7 @@ const TEXT = {
     ].join("\n"),
   ),
   failed: bilingual("Something went wrong on my side. Please try again.", "처리 중 문제가 생겼어요. 다시 시도해 주세요."),
+  cutOff: bilingual("(Cut off: that took too long. Please try again.)", "(시간이 너무 오래 걸려 여기서 멈췄어요. 다시 시도해 주세요.)"),
 };
 
 function parseCommand(text: string): { name: string; args: string } | null {
@@ -226,6 +244,13 @@ function whoamiText(chatId: number, isAdmin: boolean, adminConfigured: boolean):
   return bilingual(en, ko);
 }
 
+function hangeulStatusLine(env: JeannieEnv, isAdmin: boolean): string {
+  if (hangeulHudMode(env) === "live") return isAdmin ? "live" : "live in the HUD; demo data in this chat";
+  // The admin chat is trusted on its own, so /report here is live even while the HUD gets demo data.
+  if (hangeulLiveConfigured(env) && isAdmin) return "demo data in the HUD until JEANNIE_ACCESS_KEY is set (/report here is live)";
+  return "demo data";
+}
+
 function statusText(isAdmin: boolean): string {
   const env = getEnv();
   const llm = env.llm.provider === "none" ? "offline (no model configured)" : `${env.llm.provider} (${env.llm.model}; vision ${env.llm.visionModel})`;
@@ -234,7 +259,7 @@ function statusText(isAdmin: boolean): string {
     `• Language model: ${llm}`,
     `• Live search: ${configuredSearchProviders(env).join(" → ")}`,
     `• Voice: ${configuredTtsEngines(env).join(", ")}`,
-    `• Hangeul portal: ${hangeulLiveConfigured(env) ? "live" : "demo data"}`,
+    `• Hangeul portal: ${hangeulStatusLine(env, isAdmin)}`,
     `• Admin chat: ${env.telegram.adminChatId ? (isAdmin ? "this chat" : "configured") : "not set (use /whoami)"}`,
     `• Access key: ${env.accessKey ? "required" : "not required"}`,
   ];
@@ -271,32 +296,58 @@ function isMessage(value: unknown): value is TelegramMessage {
   return typeof chat === "object" && chat !== null && typeof (chat as { id?: unknown }).id === "number";
 }
 
+/** Text or caption, capped at Telegram's own limit before anything else reads it. */
+function messageBody(message: TelegramMessage): string {
+  const raw = typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : "";
+  return raw.slice(0, MAX_UPDATE_TEXT).trim();
+}
+
 async function answerWithOrchestrator(
   chatId: number,
   content: string,
   image: string | null,
   lang: LangMode,
   trusted: boolean,
+  deadline: AbortSignal,
 ): Promise<void> {
   void sendChatAction(chatId);
-  const result = await runOrchestratorToText({ messages: [{ role: "user", content }], image, lang }, { trusted });
+  const result = await runOrchestratorToText(
+    { messages: [{ role: "user", content }], image, lang },
+    { trusted, signal: deadline },
+  );
+  if (deadline.aborted) {
+    // On abort the orchestrator returns whatever streamed so far, possibly nothing.
+    const partial = result.text.trim();
+    await sendMessage(chatId, partial ? `${partial}\n\n${TEXT.cutOff}` : TEXT.failed);
+    return;
+  }
   // IoT answers must stay exactly the fixed sentence, so only add sources when there are any.
   await sendMessage(chatId, result.text + sourcesSuffix(result.sources, result.text));
 }
 
-async function handleMessage(message: TelegramMessage): Promise<void> {
+async function handleMessage(message: TelegramMessage, deadline: AbortSignal): Promise<void> {
   const chatId = message.chat.id;
   const { adminChatId } = getEnv().telegram;
   const isAdmin = Boolean(adminChatId) && String(chatId) === adminChatId;
   const lang: ReplyLang = message.from?.language_code?.toLowerCase().startsWith("ko") ? "ko" : "en";
-  const body = (message.text ?? message.caption ?? "").trim();
+  const body = messageBody(message);
   const command = parseCommand(body);
 
   if (command?.name === "whoami") {
     await sendMessage(chatId, whoamiText(chatId, isAdmin, Boolean(adminChatId)));
     return;
   }
-  if (adminChatId && !isAdmin) {
+  if (!adminChatId) {
+    // Until an admin chat is set nothing that spends model, search or portal calls is reachable,
+    // so a bot found by its username cannot run up the owner's bills.
+    if (command?.name === "start" || command?.name === "help") {
+      await sendMessage(chatId, command.name === "start" ? TEXT.start : TEXT.help);
+    } else {
+      await sendMessage(chatId, TEXT.locked);
+    }
+    return;
+  }
+  if (!isAdmin) {
     await sendMessage(chatId, TEXT.private);
     return;
   }
@@ -314,8 +365,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
         return;
       case "report": {
         void sendChatAction(chatId);
-        const report = await getHangeulReport({ trusted: isAdmin });
-        await sendMessage(chatId, formatHangeulReport(report, lang));
+        const report = await getHangeulReport({ trusted: isAdmin, signal: deadline });
+        await sendMessage(chatId, deadline.aborted ? TEXT.failed : formatHangeulReport(report, lang));
         return;
       }
       case "search": {
@@ -324,14 +375,22 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
           return;
         }
         void sendChatAction(chatId);
-        const res = await webSearch(command.args, { maxResults: 5 });
-        await sendMessage(chatId, formatSearchBriefing(res));
+        const res = await webSearch(command.args, { maxResults: 5, signal: deadline });
+        await sendMessage(chatId, deadline.aborted ? TEXT.failed : formatSearchBriefing(res));
         return;
       }
       default:
         await sendMessage(chatId, pick(lang, "Unknown command. Try /help.", "알 수 없는 명령어예요. /help 를 입력해 보세요."));
         return;
     }
+  }
+
+  // Hard rule: an IoT command gets exactly the fixed sentence, also as a photo caption,
+  // so it is answered before any image lookup, download or failure message.
+  const iot = body ? checkIoTQuery(body, "auto") : null;
+  if (iot) {
+    await sendMessage(chatId, iot);
+    return;
   }
 
   const image = imageFileId(message);
@@ -341,29 +400,37 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       return;
     }
     void sendChatAction(chatId);
-    const dataUrl = await downloadFileAsDataUrl(image.fileId);
+    const dataUrl = await downloadFileAsDataUrl(image.fileId, deadline);
     if (!dataUrl) {
-      await sendMessage(chatId, pick(lang, "I couldn't download that image. Please try again.", "이미지를 받지 못했어요. 다시 보내 주세요."));
+      const failure = pick(lang, "I couldn't download that image. Please try again.", "이미지를 받지 못했어요. 다시 보내 주세요.");
+      await sendMessage(chatId, deadline.aborted ? TEXT.failed : failure);
       return;
     }
-    await answerWithOrchestrator(chatId, body, dataUrl, body ? "auto" : lang, isAdmin);
+    await answerWithOrchestrator(chatId, body, dataUrl, body ? "auto" : lang, isAdmin, deadline);
     return;
   }
 
-  if (body) await answerWithOrchestrator(chatId, body, null, "auto", isAdmin);
+  if (body) await answerWithOrchestrator(chatId, body, null, "auto", isAdmin, deadline);
+}
+
+export interface UpdateOptions {
+  /** Overrides the per-update deadline (tests). */
+  deadline?: AbortSignal;
 }
 
 /**
  * Handles one webhook update. Only `message` updates from people are answered;
- * everything else (edits, callbacks, bot messages, stickers) is ignored.
+ * everything else (edits, callbacks, bot messages, stickers) is ignored. The
+ * caller must have verified the webhook secret: admin trust comes from chat.id.
  */
-export async function handleTelegramUpdate(update: unknown): Promise<void> {
+export async function handleTelegramUpdate(update: unknown, options: UpdateOptions = {}): Promise<void> {
   if (typeof update !== "object" || update === null) return;
   const message = (update as { message?: unknown }).message;
   if (!isMessage(message) || message.from?.is_bot) return;
 
+  const deadline = options.deadline ?? AbortSignal.timeout(UPDATE_DEADLINE_MS);
   try {
-    await handleMessage(message);
+    await handleMessage(message, deadline);
   } catch (error) {
     console.error(`[telegram] update handling failed: ${errorName(error)}`);
     await sendMessage(message.chat.id, TEXT.failed);

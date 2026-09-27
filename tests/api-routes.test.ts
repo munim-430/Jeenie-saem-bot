@@ -105,6 +105,52 @@ describe("POST /api/chat", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("intercepts appliance commands and lets translation requests through", async () => {
+    const { fetchMock } = stubFetch();
+    const mute = await chat(chatRequest({ messages: [user("Mute the TV")] }));
+    expect(mute.headers.get("x-jeannie-agent")).toBe("iot");
+    expect(await mute.text()).toBe("Yes, it is done.");
+
+    const washer = await chat(chatRequest({ messages: [user("세탁기 돌려줘")] }));
+    expect(washer.headers.get("x-jeannie-agent")).toBe("iot");
+    expect(await washer.text()).toBe("네, 처리되었습니다.");
+
+    const translate = await chat(chatRequest({ messages: [user("Translate 'the lights are off' into Korean")], lang: "bilingual" }));
+    expect(translate.headers.get("x-jeannie-agent")).toBe("offline");
+    expect(await translate.text()).not.toBe("Yes, it is done.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers Korean prompts with English terms in Korean", async () => {
+    const res = await chat(chatRequest({ messages: [user("React useEffect 설명해줘")], lang: "auto" }));
+    expect(res.headers.get("x-jeannie-lang")).toBe("ko");
+    expect(await res.text()).toContain("오프라인 모드");
+  });
+
+  it("does not search the web for small talk", async () => {
+    const { fetchMock } = stubFetch();
+    const res = await chat(chatRequest({ messages: [user("I had a rough day today")] }));
+    expect(res.headers.get("x-jeannie-agent")).toBe("offline");
+    expect(res.headers.has("x-jeannie-sources")).toBe(false);
+    await res.text();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("searches a follow-up together with the question it continues", async () => {
+    const { urls } = stubFetch();
+    const messages: ChatMessage[] = [user("What's the weather in Busan today?"), { role: "assistant", content: "Sunny." }, user("And tomorrow?")];
+    const res = await chat(chatRequest({ messages }));
+    expect(res.headers.get("x-jeannie-agent")).toBe("search");
+    await res.text();
+    expect(new URL(urls[0]).searchParams.get("q")).toBe("What's the weather in Busan today? And tomorrow?");
+  });
+
+  it("sends an image of a daily report to vision, not to the Hangeul bridge", async () => {
+    const res = await chat(chatRequest({ messages: [user("Summarize this daily report")], image: PNG }));
+    expect(res.headers.get("x-jeannie-agent")).toBe("offline"); // vision needs a model
+    expect(await res.text()).toMatch(/vision/i);
+  });
+
   it("streams offline answers when no model is configured", async () => {
     const res = await chat(chatRequest({ messages: [user("Write a poem about neon")] }));
     expect(res.headers.get("x-jeannie-agent")).toBe("offline");
@@ -183,6 +229,16 @@ describe("GET /api/status", () => {
     expect(body.search.providers).toEqual(["duckduckgo"]);
     expect(body.hangeul.mode).toBe("mock");
     expect(body.telegram.configured).toBe(false);
+  });
+
+  it("reports Hangeul as live only when the HUD can actually get live data", async () => {
+    for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD"]) vi.stubEnv(name, SECRETS[name]);
+    // Configured portal, open API: /api/hangeul and /api/chat serve demo data to every caller.
+    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("mock");
+    vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
+    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("live");
+    vi.stubEnv("MOCK_MODE", "true");
+    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("mock");
   });
 });
 

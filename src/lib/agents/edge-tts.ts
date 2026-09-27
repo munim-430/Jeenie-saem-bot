@@ -39,12 +39,13 @@ const WSS_HEADERS = {
 } as const;
 
 export type EdgeTtsErrorCode =
-  | "invalid_input" // bad voice/prosody or nothing speakable
+  | "invalid_input" // bad voice or prosody (configuration)
+  | "empty_text" // nothing left to send once control characters are removed
   | "forbidden" // HTTP 403 on the handshake (token/clock problem)
   | "handshake_failed" // any other non-101 handshake response
   | "socket" // network error or socket closed before turn.end
   | "protocol" // malformed frame from the service
-  | "no_audio" // turn ended without any audio
+  | "no_audio" // turn ended without any audio: the voice cannot speak this text
   | "timeout"
   | "aborted";
 
@@ -483,7 +484,7 @@ function concatBytes(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
 export async function synthesizeEdgeTts(options: EdgeTtsOptions): Promise<Uint8Array<ArrayBuffer>> {
   const timeoutMs = options.timeoutMs ?? EDGE_TIMEOUT_MS;
   const text = removeIncompatibleCharacters(options.text).replace(/\s+/g, " ").trim();
-  if (!text) throw new EdgeTtsError("invalid_input", "Nothing to synthesize.");
+  if (!text) throw new EdgeTtsError("empty_text", "Nothing to synthesize.");
 
   const chunks = splitTextByBytes(text, EDGE_MAX_CHUNK_BYTES);
   // Validate voice and prosody before opening any socket.

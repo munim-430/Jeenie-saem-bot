@@ -99,6 +99,69 @@ describe("routeQuery", () => {
     expect(route.lang).toBe(lang);
     expect(route.reason).toBeTruthy();
   });
+
+  it.each([
+    ["Summarize this daily report", "en"],
+    ["Read this daily report and translate it into Korean", "en"],
+    ["Summarize the daily report", "en"],
+    ["Here is a screenshot of the Hangeul portal, what's wrong?", "en"],
+    ["이 일일 보고서 번역해줘", "ko"],
+    ["이 관리자 보고서 스크린샷 요약해줘", "ko"],
+  ])("sends an attached report image to vision: %j", (text, lang) => {
+    expect(routeQuery({ text, hasImage: true })).toMatchObject({ agent: "vision", lang });
+    expect(routeQuery({ text, hasImage: false }).agent).toBe("hangeul");
+  });
+
+  it("keeps explicit portal requests with the bridge even with an image", () => {
+    expect(routeQuery({ text: "Show me the Hangeul report", hasImage: true }).agent).toBe("hangeul");
+    expect(routeQuery({ text: "한글 포털 상태 확인해줘", hasImage: true }).agent).toBe("hangeul");
+  });
+
+  it.each([
+    ["React useEffect 설명해줘", "core", "ko"],
+    ["Next.js App Router 사용법", "core", "ko"],
+    ["iPhone 15 Pro Max 가격 알려줘", "search", "ko"],
+    ["Answer in Korean: what is photosynthesis?", "core", "ko"],
+    ["영어로 대답해줘: 광합성이 뭐야?", "core", "en"],
+    ["Explain photosynthesis in English and Korean", "core", "bilingual"],
+    ["광합성 한영으로 설명해줘", "core", "bilingual"],
+  ])("resolves the answer language of %j", (text, agent, lang) => {
+    expect(routeQuery({ text, hasImage: false })).toMatchObject({ agent, lang });
+  });
+
+  it("gives an image-only turn the language of the previous user turn, else English", () => {
+    expect(routeQuery({ text: "", hasImage: true, previous: ["사진 하나 보낼게요", ""] })).toMatchObject({ agent: "vision", lang: "ko" });
+    expect(routeQuery({ text: " ", hasImage: true, previous: ["Here comes a photo"] }).lang).toBe("en");
+    expect(routeQuery({ text: "", hasImage: true }).lang).toBe("en");
+    expect(routeQuery({ text: "", hasImage: true, previous: ["사진 봐줘"], lang: "en" }).lang).toBe("en");
+  });
+
+  it.each([
+    "I had a rough day today",
+    "Good morning Jeannie, what should I focus on today?",
+    "오늘 기분이 안 좋아",
+    "오늘 저녁 메뉴 추천해줘",
+    "최근에 스트레스를 많이 받아",
+    "이 코드 맞는지 확인해줘: const x = 1",
+    "Write a New Year greeting card for 2026",
+  ])("keeps small talk with the core agent: %j", (text) => {
+    expect(routeQuery({ text, hasImage: false }).agent).toBe("core");
+  });
+
+  it("routes follow-ups of a live search to search, but not pleasantries or unrelated turns", () => {
+    const weather = ["What's the weather in Busan today?"];
+    expect(routeQuery({ text: "And tomorrow?", hasImage: false, previous: weather }).agent).toBe("search");
+    expect(routeQuery({ text: "내일은?", hasImage: false, previous: ["부산 오늘 날씨 어때?"] })).toMatchObject({ agent: "search", lang: "ko" });
+    expect(routeQuery({ text: "thanks!", hasImage: false, previous: weather }).agent).toBe("core");
+    expect(routeQuery({ text: "And tomorrow?", hasImage: false, previous: ["Write me a poem"] }).agent).toBe("core");
+    expect(routeQuery({ text: "And tomorrow?", hasImage: false }).agent).toBe("core");
+  });
+
+  it("does not intercept a translation request as IoT, whatever the HUD mode", () => {
+    const text = "Translate 'the lights are off' into Korean";
+    expect(routeQuery({ text, hasImage: false }).agent).toBe("core");
+    expect(routeQuery({ text, hasImage: false, lang: "bilingual" })).toMatchObject({ agent: "core", lang: "bilingual" });
+  });
 });
 
 describe("IoT interceptor path", () => {
@@ -213,6 +276,114 @@ describe("search agent", () => {
   });
 });
 
+describe("search query for follow-ups", () => {
+  const searchedFor = (fetchMock: ReturnType<typeof stubSearch>) =>
+    fetchMock.mock.calls
+      .map(([input]) => new URL(String(input instanceof Request ? input.url : input)))
+      .filter((url) => url.hostname === "api.duckduckgo.com")
+      .map((url) => url.searchParams.get("q"));
+
+  it("without a model, prefixes a follow-up with the question it continues", async () => {
+    const fetchMock = stubSearch();
+    const en = await runOrchestratorToText(
+      { messages: [user("What's the weather in Busan today?"), { role: "assistant", content: "Sunny, 24°C." }, user("And tomorrow?")] },
+      { trusted: false },
+    );
+    expect(en.agent).toBe("search");
+    expect(searchedFor(fetchMock)).toEqual(["What's the weather in Busan today? And tomorrow?"]);
+
+    fetchMock.mockClear();
+    const ko = await runOrchestratorToText(
+      { messages: [user("부산 오늘 날씨 어때?"), { role: "assistant", content: "맑아요." }, user("내일은?")] },
+      { trusted: false },
+    );
+    expect(ko).toMatchObject({ agent: "search", lang: "ko" });
+    expect(searchedFor(fetchMock)).toEqual(["부산 오늘 날씨 어때? 내일은?"]);
+  });
+
+  it("searches a standalone question as it is", async () => {
+    const fetchMock = stubSearch();
+    await runOrchestratorToText(
+      { messages: [user("Write me a poem"), { role: "assistant", content: "Roses..." }, user("latest news about Seoul")] },
+      { trusted: false },
+    );
+    expect(searchedFor(fetchMock)).toEqual(["latest news about Seoul"]);
+  });
+
+  it("with a model, asks it for a standalone query from the recent turns", async () => {
+    const fetchMock = stubSearch();
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: '"Busan weather forecast tomorrow"\n' }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage,
+        warnings: [],
+      }),
+      doStream: async () => ({
+        stream: simulateReadableStream({ chunks: [...textParts("Rain [1]."), finish()] as StreamPart[], initialDelayInMs: null, chunkDelayInMs: null }),
+      }),
+    });
+    const messages: ChatMessage[] = [user("What's the weather in Busan today?"), { role: "assistant", content: "Sunny, 24°C." }, user("And tomorrow?")];
+    const result = await runOrchestratorToText({ messages }, { trusted: false, model });
+    expect(result).toMatchObject({ agent: "search", text: "Rain [1]." });
+    expect(searchedFor(fetchMock)).toEqual(["Busan weather forecast tomorrow"]);
+    const prompt = JSON.stringify(model.doGenerateCalls[0].prompt);
+    expect(prompt).toContain("User: What's the weather in Busan today?");
+    expect(prompt).toContain("Assistant: Sunny, 24°C.");
+    expect(prompt).toContain("User: And tomorrow?");
+  });
+
+  it("falls back to the heuristic query when the rewrite fails", async () => {
+    const fetchMock = stubSearch();
+    const model = mockModel(textParts("Rain."));
+    const messages: ChatMessage[] = [user("What's the weather in Busan today?"), { role: "assistant", content: "Sunny." }, user("And tomorrow?")];
+    const result = await runOrchestratorToText({ messages }, { trusted: false, model });
+    expect(result.agent).toBe("search");
+    expect(searchedFor(fetchMock)).toEqual(["What's the weather in Busan today? And tomorrow?"]);
+  });
+});
+
+describe("language of the answer", () => {
+  it("tells the model the language the message asked for", async () => {
+    const ko = mockModel(textParts("광합성은..."));
+    await runOrchestratorToText({ messages: [user("Answer in Korean: what is photosynthesis?")] }, { trusted: false, model: ko });
+    expect(systemPrompt(ko)).toContain("Respond in Korean");
+
+    const mixed = mockModel(textParts("useEffect는..."));
+    await runOrchestratorToText({ messages: [user("React useEffect 설명해줘")] }, { trusted: false, model: mixed });
+    expect(systemPrompt(mixed)).toContain("Respond in Korean");
+
+    const en = mockModel(textParts("Photosynthesis is..."));
+    await runOrchestratorToText({ messages: [user("영어로 대답해줘: 광합성이 뭐야?")] }, { trusted: false, model: en });
+    expect(systemPrompt(en)).toContain("Respond in English.");
+  });
+
+  it("analyses an image-only turn in the language of the previous user turn", async () => {
+    const model = mockModel(textParts("작은 픽셀이에요."));
+    const messages: ChatMessage[] = [user("사진 하나 보낼게요"), { role: "assistant", content: "네, 보내 주세요." }, user("")];
+    const result = await runOrchestratorToText({ messages, image: PNG }, { trusted: false, model });
+    expect(result).toMatchObject({ agent: "vision", lang: "ko" });
+    const latest = model.doStreamCalls[0].prompt.at(-1);
+    expect(latest?.role === "user" ? latest.content[0] : null).toMatchObject({ type: "text", text: "이 이미지를 분석해 주세요." });
+  });
+
+  it("sends a photographed daily report to the vision agent with the image", async () => {
+    const model = mockModel(textParts("A daily report."));
+    const result = await runOrchestratorToText({ messages: [user("Summarize this daily report")], image: PNG }, { trusted: false, model });
+    expect(result.agent).toBe("vision");
+    const latest = model.doStreamCalls[0].prompt.at(-1);
+    expect(latest?.role === "user" ? latest.content[1] : null).toMatchObject({ type: "file", mediaType: "image/png" });
+  });
+
+  it("keeps small talk away from the search providers", async () => {
+    const fetchMock = stubSearch();
+    const model = mockModel(textParts("Sorry to hear that."));
+    const result = await runOrchestratorToText({ messages: [user("I had a rough day today")] }, { trusted: false, model });
+    expect(result).toMatchObject({ agent: "core", sources: [], text: "Sorry to hear that." });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("core agent", () => {
   it("streams model text with the last 20 messages and the webSearch tool on OpenAI", async () => {
     const model = mockModel(textParts("Hello, ", "operator."));
@@ -248,6 +419,53 @@ describe("core agent", () => {
     expect(fetchMock).toHaveBeenCalled();
     expect(model.doStreamCalls).toHaveLength(2);
     expect(result.text.startsWith("Seoul is the capital.\n\nSources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul")).toBe(true);
+  });
+
+  it("forbids tool calls on the last step so the model answers from what it found", async () => {
+    stubSearch();
+    const toolCall = (id: string) => [
+      { type: "tool-call", toolCallId: id, toolName: "webSearch", input: JSON.stringify({ query: "Seoul" }) },
+      finish("tool-calls"),
+    ];
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async (options) => ({
+        stream: simulateReadableStream({
+          chunks: (options.toolChoice?.type === "none" ? [...textParts("Seoul is the capital."), finish()] : toolCall(`c${++call}`)) as StreamPart[],
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+        }),
+      }),
+    });
+    const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false, model });
+    expect(model.doStreamCalls.map((c) => c.toolChoice?.type)).toEqual(["auto", "auto", "none"]);
+    expect(model.doStreamCalls[2].tools?.map((t) => t.name)).toEqual(["webSearch"]);
+    expect(result.text.startsWith("Seoul is the capital.\n\nSources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul")).toBe(true);
+  });
+
+  it("keeps the sources when the model still ends without text", async () => {
+    stubSearch();
+    const model = mockModel([
+      { type: "tool-call", toolCallId: "c1", toolName: "webSearch", input: JSON.stringify({ query: "Seoul" }) },
+      finish("tool-calls"),
+    ]);
+    const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false, model });
+    expect(result.text.startsWith("I came up empty on that one.")).toBe(true);
+    expect(result.text).toContain("\n\nSources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul");
+  });
+
+  it("separates the text of consecutive tool-loop steps with a blank line", async () => {
+    stubSearch();
+    const model = mockModel(
+      [
+        ...textParts("Let me check that."),
+        { type: "tool-call", toolCallId: "c1", toolName: "webSearch", input: JSON.stringify({ query: "Seoul" }) },
+        finish("tool-calls"),
+      ],
+      [...textParts("Seoul is the capital."), finish()],
+    );
+    const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false, model });
+    expect(result.text.startsWith("Let me check that.\n\nSeoul is the capital.\n\nSources:")).toBe(true);
   });
 
   it("turns a mid-stream provider error into a graceful closing line", async () => {

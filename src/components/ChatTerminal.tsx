@@ -28,6 +28,8 @@ const SUGGESTIONS: Suggestion[] = [
 interface ChatTerminalProps {
   messages: HudMessage[];
   phase: ChatPhase;
+  /** Jeannie is reading a reply aloud. */
+  speaking: boolean;
   lang: LangMode;
   onLangChange: (lang: LangMode) => void;
   voiceOn: boolean;
@@ -90,6 +92,7 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
 export function ChatTerminal({
   messages,
   phase,
+  speaking,
   lang,
   onLangChange,
   voiceOn,
@@ -230,6 +233,7 @@ export function ChatTerminal({
 
       <ChatComposer
         phase={phase}
+        speaking={speaking}
         lang={lang}
         onLangChange={onLangChange}
         voiceOn={voiceOn}

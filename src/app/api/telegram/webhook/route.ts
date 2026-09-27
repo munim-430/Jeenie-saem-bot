@@ -10,10 +10,19 @@ const SECRET_HEADER = "x-telegram-bot-api-secret-token";
 
 export async function POST(req: Request): Promise<Response> {
   const { webhookSecret, botToken } = getEnv().telegram;
-  if (webhookSecret && !timingSafeEqual(req.headers.get(SECRET_HEADER) ?? "", webhookSecret)) {
+  if (!botToken) return errorResponse(503, "telegram_not_configured", "TELEGRAM_BOT_TOKEN is not configured.");
+  // Fail closed: without the secret anyone could post forged updates, including
+  // ones that claim to come from the admin chat (admin trust is chat.id).
+  if (!webhookSecret) {
+    return errorResponse(
+      503,
+      "telegram_webhook_secret_required",
+      "TELEGRAM_WEBHOOK_SECRET is not configured, so webhook updates are refused.",
+    );
+  }
+  if (!timingSafeEqual(req.headers.get(SECRET_HEADER) ?? "", webhookSecret)) {
     return errorResponse(401, "invalid_webhook_secret", "Invalid Telegram webhook secret.");
   }
-  if (!botToken) return errorResponse(503, "telegram_not_configured", "TELEGRAM_BOT_TOKEN is not configured.");
 
   let update: unknown;
   try {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Eye, EyeOff, KeyRound, X } from "lucide-react";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { isValidAccessKey } from "@/lib/client/api";
 
 export type AccessKeyReason = "required" | "rejected" | "manage";
 
@@ -34,6 +35,7 @@ const COPY: Record<AccessKeyReason, { title: string; body: string }> = {
 export function AccessKeyDialog({ open, reason, hasStoredKey, onSubmit, onForget, onClose }: AccessKeyDialogProps) {
   const [value, setValue] = useState("");
   const [reveal, setReveal] = useState(false);
+  const [invalid, setInvalid] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useDialogFocus(open, onClose, inputRef);
 
@@ -41,12 +43,20 @@ export function AccessKeyDialog({ open, reason, hasStoredKey, onSubmit, onForget
     if (open) {
       setValue("");
       setReveal(false);
+      setInvalid(false);
     }
   }, [open]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (value.trim()) onSubmit(value.trim());
+    if (!value.trim()) return;
+    // Keys are plain ASCII; a Korean IME or smart quotes would make every request fail.
+    if (!isValidAccessKey(value)) {
+      setInvalid(true);
+      inputRef.current?.focus();
+      return;
+    }
+    onSubmit(value.trim());
   };
 
   const copy = COPY[reason];
@@ -69,7 +79,7 @@ export function AccessKeyDialog({ open, reason, hasStoredKey, onSubmit, onForget
             role="dialog"
             aria-modal="true"
             aria-labelledby="access-key-title"
-            aria-describedby="access-key-desc"
+            aria-describedby={invalid ? "access-key-desc access-key-error" : "access-key-desc"}
             tabIndex={-1}
             className="hud-panel w-full max-w-md"
             initial={{ scale: 0.95, y: 10 }}
@@ -116,12 +126,19 @@ export function AccessKeyDialog({ open, reason, hasStoredKey, onSubmit, onForget
                   ref={inputRef}
                   type={reveal ? "text" : "password"}
                   value={value}
-                  onChange={(event) => setValue(event.target.value)}
+                  onChange={(event) => {
+                    setValue(event.target.value);
+                    setInvalid(false);
+                  }}
                   autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
                   spellCheck={false}
-                  aria-invalid={reason === "rejected"}
+                  aria-invalid={reason === "rejected" || invalid}
+                  aria-errormessage={invalid ? "access-key-error" : undefined}
                   placeholder={hasStoredKey ? "Enter a new key" : "Paste your Jeannie access key"}
-                  className="hud-input min-h-[44px] px-3 pr-12 font-mono text-sm"
+                  // 16px on phones: iOS Safari zooms into any smaller focused field.
+                  className="hud-input min-h-[44px] px-3 pr-12 font-mono text-base sm:text-sm"
                 />
                 <button
                   type="button"
@@ -136,6 +153,11 @@ export function AccessKeyDialog({ open, reason, hasStoredKey, onSubmit, onForget
                   )}
                 </button>
               </div>
+              {invalid ? (
+                <p id="access-key-error" role="alert" className="-mt-2 font-mono text-[0.72rem] text-neon-hot">
+                  Keys use plain letters, digits and symbols (ASCII) only. · 영문, 숫자, 기호만 쓸 수 있어요.
+                </p>
+              ) : null}
 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 {hasStoredKey ? (

@@ -3,8 +3,8 @@
 // Node.js runtime only (Edge TTS uses `ws`).
 
 import { getEnv } from "../env";
-import { detectLanguage, stripMarkdownForSpeech } from "../utils";
-import { EdgeTtsError, synthesizeEdgeTts } from "./edge-tts";
+import { containsHangul, detectLanguage, stripMarkdownForSpeech } from "../utils";
+import { EdgeTtsError, removeIncompatibleCharacters, synthesizeEdgeTts } from "./edge-tts";
 
 export type ServerTtsEngine = "elevenlabs" | "edge";
 
@@ -32,7 +32,10 @@ export class TtsUnavailableError extends Error {
   }
 }
 
-/** The text has nothing speakable once markdown, code and URLs are removed. */
+/**
+ * The text has nothing speakable once markdown, code, URLs and control characters
+ * are removed, or the voice produced no audio for it.
+ */
 export class TtsInputError extends Error {
   constructor(message = "Nothing to speak after removing markdown, code and links.") {
     super(message);
@@ -46,6 +49,17 @@ const TOTAL_BUDGET_MS = 27_000;
 const EDGE_MAX_MS = 25_000;
 const EDGE_MIN_MS = 2_000;
 
+/**
+ * Edge voice for English text that contains Hangul. English-only voices such as
+ * JennyNeural silently skip every Hangul word (and return no audio for Korean-only
+ * text); this one was verified live to speak both. Override with EDGE_TTS_VOICE_MIXED.
+ */
+export const DEFAULT_EDGE_VOICE_MIXED = "en-US-EmmaMultilingualNeural";
+
+// Edge ends the turn silently for punctuation-only text ("...", "?!", "—", "。"), but reads
+// symbols, emoji and the punctuation marks listed here aloud (all checked live).
+const SPEAKABLE = /[\p{L}\p{N}\p{S}%&@#*/\\§¶‰_]/u;
+
 export const ELEVENLABS_VOICE_SETTINGS = {
   stability: 0.5,
   similarity_boost: 0.75,
@@ -58,6 +72,12 @@ class EngineError extends Error {}
 function withTimeout(ms: number, signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(ms);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+// The request and the body download share one signal, so both fail the same way.
+function requestFailure(error: unknown): EngineError {
+  const name = error instanceof Error ? error.name : "";
+  return new EngineError(name === "TimeoutError" ? "timeout" : name === "AbortError" ? "aborted" : "network error");
 }
 
 async function synthesizeElevenLabs(
@@ -77,16 +97,39 @@ async function synthesizeElevenLabs(
       signal: withTimeout(ELEVENLABS_TIMEOUT_MS, signal),
     });
   } catch (error) {
-    const name = error instanceof Error ? error.name : "";
-    throw new EngineError(name === "TimeoutError" ? "timeout" : name === "AbortError" ? "aborted" : "network error");
+    throw requestFailure(error);
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
     throw new EngineError(`HTTP ${res.status}`);
   }
-  const audio = new Uint8Array(await res.arrayBuffer());
+  let body: ArrayBuffer;
+  try {
+    body = await res.arrayBuffer();
+  } catch (error) {
+    throw requestFailure(error);
+  }
+  const audio = new Uint8Array(body);
   if (audio.byteLength === 0) throw new EngineError("empty audio");
   return audio;
+}
+
+// Same rule as env.ts: blank values and the `your_*` placeholders count as unset.
+function configuredMixedVoice(): string | undefined {
+  const value = process.env.EDGE_TTS_VOICE_MIXED?.trim();
+  return value && !/^your_[a-z0-9_]+$/i.test(value) ? value : undefined;
+}
+
+function edgeVoiceFor(
+  text: string,
+  lang: "en" | "ko",
+  voices: { edgeVoiceEn: string; edgeVoiceKo: string },
+): string {
+  if (lang === "ko") return voices.edgeVoiceKo;
+  if (!containsHangul(text)) return voices.edgeVoiceEn;
+  // An English voice that is already multilingual keeps one voice across English replies.
+  const englishSpeaksKorean = /Multilingual/i.test(voices.edgeVoiceEn);
+  return configuredMixedVoice() ?? (englishSpeaksKorean ? voices.edgeVoiceEn : DEFAULT_EDGE_VOICE_MIXED);
 }
 
 function reasonOf(error: unknown): string {
@@ -97,7 +140,8 @@ function reasonOf(error: unknown): string {
 
 /**
  * Speak `text` as Jeannie. Markdown is stripped first; `lang` picks the Edge
- * voice and defaults to the detected language of the text.
+ * voice and defaults to the detected language of the text. English text with
+ * Hangul in it goes to a voice that speaks both languages.
  * Throws TtsInputError (nothing speakable) or TtsUnavailableError.
  */
 export async function synthesizeSpeech(options: {
@@ -105,8 +149,8 @@ export async function synthesizeSpeech(options: {
   lang?: "en" | "ko";
   signal?: AbortSignal;
 }): Promise<SpeechResult> {
-  const text = stripMarkdownForSpeech(options.text);
-  if (!text) throw new TtsInputError();
+  const text = removeIncompatibleCharacters(stripMarkdownForSpeech(options.text)).replace(/\s+/g, " ").trim();
+  if (!SPEAKABLE.test(text)) throw new TtsInputError();
   const lang = options.lang ?? detectLanguage(text);
   const { tts } = getEnv();
   const deadline = Date.now() + TOTAL_BUDGET_MS;
@@ -135,12 +179,18 @@ export async function synthesizeSpeech(options: {
     try {
       const audio = await synthesizeEdgeTts({
         text,
-        voice: lang === "ko" ? tts.edgeVoiceKo : tts.edgeVoiceEn,
+        voice: edgeVoiceFor(text, lang, tts),
         signal: options.signal,
         timeoutMs: Math.min(EDGE_MAX_MS, Math.max(EDGE_MIN_MS, deadline - Date.now())),
       });
       return { audio, engine: "edge", contentType: "audio/mpeg" };
     } catch (error) {
+      // A configured voice that is unknown fails as `socket`/`invalid_input`, so these two
+      // mean the text itself has nothing this voice can say: skip it rather than report a
+      // server outage (a 503 makes the HUD drop the server voice for a minute).
+      if (error instanceof EdgeTtsError && (error.code === "no_audio" || error.code === "empty_text")) {
+        throw new TtsInputError("The voice found nothing it can speak in this text.");
+      }
       failures.push({ engine: "edge", reason: reasonOf(error) });
     }
   }

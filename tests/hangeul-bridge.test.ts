@@ -4,12 +4,14 @@ import {
   formatHangeulStatus,
   getHangeulReport,
   getHangeulStatus,
+  hangeulHudMode,
   humanizeKey,
   isHangeulQuery,
   isHangeulStatusQuery,
   joinUrl,
   normalizeHangeulReport,
 } from "@/lib/agents/hangeul-bridge";
+import { routeQuery, runOrchestratorToText } from "@/lib/agents/orchestrator";
 
 const USER = "admin@hangeul";
 const PASSWORD = "p@ss-wörd-secret";
@@ -59,8 +61,27 @@ describe("isHangeulQuery", () => {
     "한글 학원 보고서",
     "어드민 현황 알려줘",
     "일일 보고서",
+    // Phrasings that used to fall through to web search or the core LLM.
+    "What's today's report?",
+    "Send me today's report",
+    "show today\u2019s report",
+    "Send me the report",
+    "Is the admin portal down?",
+    "Is the portal online?",
+    "hangeul down now",
+    "How many students enrolled at Hangeul today?",
+    "Any pending payments at Hangeul?",
+    "What's our attendance rate this week?",
+    "How many enrollments this month at the academy?",
+    "포털 상태 확인해줘",
+    "오늘 출석률 어때?",
+    "한글학원 재원생 몇 명이야?",
+    "재원생 몇 명이야?",
+    "학원 현황 알려줘",
+    "학원비 미납 몇 건이야?",
   ])("routes %j to the bridge", (text) => {
     expect(isHangeulQuery(text)).toBe(true);
+    expect(routeQuery({ text, hasImage: false }).agent).toBe("hangeul");
   });
 
   it.each([
@@ -70,14 +91,92 @@ describe("isHangeulQuery", () => {
     "한글로 보고서 써줘",
     "한글 배우는 법 알려줘",
     "한글날이 언제야?",
+    "I'm bad at hangeul",
+    "Where did hangeul come from?",
+    "How do I write my name in hangeul?",
+    "What was the attendance at the World Cup final?",
+    "Do I have any pending payments on PayPal?",
+    "Show me the report on climate change",
+    "Is the Steam portal down?",
+    "Is hangeul hard to pick up?",
+    "Is hangeul easy to write down?",
+    "What's today's report on the weather?",
+    "우리 집 전기요금 미납",
+    "국회의원 출석률",
   ])("leaves %j to other agents (hangeul is also the alphabet)", (text) => {
     expect(isHangeulQuery(text)).toBe(false);
   });
 
-  it("tells status checks from report requests", () => {
-    expect(isHangeulStatusQuery("Is the Hangeul portal up?")).toBe(true);
-    expect(isHangeulStatusQuery("한글 포털 상태")).toBe(true);
-    expect(isHangeulStatusQuery("Pull up the Hangeul report")).toBe(false);
+  it.each([
+    "Is the Hangeul portal up?",
+    "is hangeul up right now ?",
+    "hangeul down now",
+    "is the hangeul portal up\n\n",
+    "hangeul status",
+    "status of the hangeul server",
+    "ping hangeul",
+    "Is the admin portal down?",
+    "Is the portal online?",
+    "한글 포털 상태",
+    "포털 상태 확인해줘",
+    "한글 서버 다운됐어?",
+  ])("treats %j as a portal health check", (text) => {
+    expect(isHangeulStatusQuery(text)).toBe(true);
+  });
+
+  it.each([
+    "Pull up the Hangeul report",
+    "hangeul report",
+    "check hangeul",
+    "hangeul, pull up the dashboard",
+    "Is the hangeul portal hard to set up?",
+    // Report beats status: the status word is about the data, not the portal.
+    "Give me the Hangeul report on payment status",
+    "Hangeul daily report: what's the enrollment status?",
+    "What's the Hangeul enrollment status?",
+    "한글 관리자 보고서에서 수강생 출석 상태 알려줘",
+    "학원 현황 알려줘",
+  ])("treats %j as a report request", (text) => {
+    expect(isHangeulStatusQuery(text)).toBe(false);
+  });
+
+  it("answers a status question with a status check and a report question with the report", async () => {
+    for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
+    const ask = (content: string) => runOrchestratorToText({ messages: [{ role: "user", content }] }, { trusted: false });
+    const report = await ask("Give me the Hangeul report on payment status");
+    expect(report.agent).toBe("hangeul");
+    expect(report.text).toContain("Pending payments");
+    const status = await ask("Is the admin portal down?");
+    expect(status.text).toContain("Hangeul portal: online (demo)");
+  });
+});
+
+describe("routing cost", () => {
+  // Whitespace runs used to backtrack cubically: 2,000 spaces took about 4 s.
+  const padded = (filler: string) => `hangeul portal up${filler.repeat(20_000)}.`;
+
+  it.each([
+    ["spaces", " "],
+    ["newlines", "\n"],
+    ["mixed whitespace", " \r\n\t"],
+  ])("stays linear on 20,000 characters of %s", async (_label, filler) => {
+    for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
+    const text = padded(filler);
+    const timed = async (run: () => unknown) => {
+      const started = performance.now();
+      await run();
+      return performance.now() - started;
+    };
+    expect(await timed(() => isHangeulQuery(text))).toBeLessThan(50);
+    expect(await timed(() => isHangeulStatusQuery(text))).toBeLessThan(50);
+    expect(await timed(() => routeQuery({ text, hasImage: false }))).toBeLessThan(50);
+    let agent = "";
+    const orchestrated = await timed(async () => {
+      agent = (await runOrchestratorToText({ messages: [{ role: "user", content: text }] }, { trusted: false })).agent;
+    });
+    expect(agent).toBe("hangeul");
+    expect(orchestrated).toBeLessThan(50);
+    expect(isHangeulStatusQuery(text)).toBe(true);
   });
 });
 
@@ -86,6 +185,26 @@ describe("joinUrl", () => {
     expect(joinUrl("https://hangeul.com.bd/admin", "/api/reports/daily")).toBe("https://hangeul.com.bd/admin/api/reports/daily");
     expect(joinUrl("https://hangeul.com.bd/admin/", "api/status")).toBe("https://hangeul.com.bd/admin/api/status");
     expect(joinUrl("https://hangeul.com.bd", "/api/r?format=json")).toBe("https://hangeul.com.bd/api/r?format=json");
+    expect(joinUrl("https://hangeul.com.bd/admin///", "//api/status")).toBe("https://hangeul.com.bd/admin/api/status");
+  });
+
+  it("stays fast on a long run of slashes", () => {
+    const started = performance.now();
+    joinUrl(`https://hangeul.example${"/".repeat(20_000)}x`, "/api");
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+});
+
+describe("hangeulHudMode", () => {
+  it("is live only when the portal is configured and the HUD can prove an access key", () => {
+    expect(hangeulHudMode()).toBe("mock");
+    configurePortal();
+    vi.stubEnv("JEANNIE_ACCESS_KEY", "");
+    expect(hangeulHudMode()).toBe("mock");
+    vi.stubEnv("JEANNIE_ACCESS_KEY", "hud-key");
+    expect(hangeulHudMode()).toBe("live");
+    vi.stubEnv("MOCK_MODE", "true");
+    expect(hangeulHudMode()).toBe("mock");
   });
 });
 

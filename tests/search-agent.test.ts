@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  contextualSearchQuery,
   createSearchTool,
   dedupeResults,
   formatSearchBriefing,
+  isFollowUp,
+  isSearchFollowUp,
   needsLiveSearch,
   parseDuckDuckGoHtml,
   parseDuckDuckGoInstantAnswer,
@@ -175,6 +178,76 @@ describe("needsLiveSearch", () => {
     "",
   ])("keeps %j with the core agent", (text) => {
     expect(needsLiveSearch(text)).toBe(false);
+  });
+
+  it.each([
+    "I had a rough day today",
+    "Good morning Jeannie, what should I focus on today?",
+    "오늘 기분이 안 좋아",
+    "오늘 저녁 메뉴 추천해줘",
+    "최근에 스트레스를 많이 받아",
+    "이 코드 맞는지 확인해줘: const x = 1",
+    "Write a New Year greeting card for 2026",
+    "I'm so tired right now",
+    "What should I do this weekend?",
+    "I'm currently learning Korean",
+    "Today is my birthday, write me a poem",
+    "지금 내 상황이 너무 힘들어",
+    "지금 어떻게 해야 할지 모르겠어",
+    "It's time now to rest",
+    "And tomorrow?",
+  ])("does not search for small talk with a time word: %j", (text) => {
+    expect(needsLiveSearch(text)).toBe(false);
+  });
+
+  it.each([
+    "Is the Louvre open today?",
+    "Who is the current president of France?",
+    "What's happening in Seoul this weekend?",
+    "Is it raining in Busan right now?",
+    "What time does the game start tonight?",
+    "Best phones of 2026",
+    "What time is it in London?",
+    "내일 비 와?",
+    "오늘 몇 도야?",
+    "오늘 무슨 일 있었어?",
+    "이 뉴스 진짜인지 확인해줘",
+    "사실인지 확인해줘",
+  ])("still searches time-sensitive facts: %j", (text) => {
+    expect(needsLiveSearch(text)).toBe(true);
+  });
+});
+
+describe("follow-up search queries", () => {
+  const weather = ["What's the weather in Busan today?"];
+
+  it.each(["And tomorrow?", "what about Daegu?", "Tomorrow?", "In Busan?", "내일은?", "그럼 대구는?", "그러면 모레"])(
+    "treats %j as a follow-up",
+    (text) => expect(isFollowUp(text)).toBe(true),
+  );
+
+  it.each(["thanks!", "ok", "What's the latest news on the Fed today?", "고마워", ""])("does not treat %j as a follow-up", (text) =>
+    expect(isFollowUp(text)).toBe(false),
+  );
+
+  it("prefixes a follow-up with the live-fact question it continues", () => {
+    expect(contextualSearchQuery("And tomorrow?", weather)).toBe("What's the weather in Busan today? And tomorrow?");
+    expect(contextualSearchQuery("내일은?", ["부산 오늘 날씨 어때?"])).toBe("부산 오늘 날씨 어때? 내일은?");
+    expect(contextualSearchQuery("And the day after?", [...weather, "And tomorrow?"])).toBe(
+      "What's the weather in Busan today? And tomorrow? And the day after?",
+    );
+  });
+
+  it("keeps standalone or unrelated questions as they are", () => {
+    expect(contextualSearchQuery("latest news about Seoul", weather)).toBe("latest news about Seoul");
+    expect(contextualSearchQuery("bitcoin price?", ["Write me a poem"])).toBe("bitcoin price?");
+    expect(contextualSearchQuery("And tomorrow?", [])).toBe("And tomorrow?");
+  });
+
+  it("knows when a follow-up continues a live search", () => {
+    expect(isSearchFollowUp("And tomorrow?", weather)).toBe(true);
+    expect(isSearchFollowUp("thanks!", weather)).toBe(false);
+    expect(isSearchFollowUp("And tomorrow?", ["Write me a poem"])).toBe(false);
   });
 });
 

@@ -32,15 +32,14 @@ export function withTimeout(ms: number, parent?: AbortSignal | null): AbortSigna
 // ─── Routing heuristic ──────────────────────────────────────────────────────
 // Cues are deliberately scoped: bare "now", "schedule", "search" or 결과 show up
 // in ordinary follow-ups ("now make it shorter", "binary search", "결과를 요약해줘")
-// that must stay with the core agent and its conversation context.
+// that must stay with the core agent and its conversation context. Time words
+// ("today", 오늘, 최근, a year) also fill small talk ("I had a rough day
+// today", "오늘 저녁 메뉴 추천해줘"), so they only count next to a factual cue.
 
 const EN_LIVE_CUES: RegExp[] = [
-  /\b(?:today|tonight|tomorrow|yesterday)\b/i,
-  /\bright now\b|\bas of (?:now|today)\b|\bat the moment\b|\bnow\s*\?/i,
-  /\bcurrent(?:ly)?\b/i,
-  /\b(?:latest|newest|recent(?:ly)?|up[- ]to[- ]date|breaking|trending)\b/i,
+  /\bas of (?:now|today)\b|\bcurrent time\b|\bwhat time is it in\b|\bwhat(?:'s| is) the time in\b/i,
+  /\b(?:latest|newest|up[- ]to[- ]date|breaking|trending)\b/i,
   /\bnews\b|\bheadlines?\b/i,
-  /\bthis (?:week|weekend|month|year|season)\b|\b(?:last|next) (?:week|weekend|month|year|night)\b/i,
   /\b(?:scores?|standings|who won|who is winning|winner of|final result)\b/i,
   /\b(?:weather|forecast)\b/i,
   /\b(?:prices?|pricing|stock (?:price|market|quote)s?|stocks|share price|market cap|exchange rates?|crypto(?:currency|currencies)?|bitcoin|ethereum)\b/i,
@@ -50,26 +49,91 @@ const EN_LIVE_CUES: RegExp[] = [
   /^\s*search\b|\bsearch\s+(?:for|the web|online|the internet|up|about|news)\b|\b(?:web|online|internet)\s+search\b|\b(?:can you|please|could you)\s+search\b/i,
   /\blook(?:\s+|-)?up\b|\bgoogle\s+(?:it|that|this|for)\b|\bfind out\b/i,
   /\bverify\b|\bfact[- ]?check\b|\b(?:is|was) (?:it|that|this) true\b|\btrue or false\b|\bdebunk\b|\brumou?rs?\b/i,
-  /\b20(?:2[4-9]|3[0-5])\b/,
 ];
 
+const EN_TIME_CUE =
+  /\b(?:today|tonight|tomorrow|yesterday|current(?:ly)?|recent(?:ly)?)\b|\bright now\b|\bat the moment\b|\bnow\s*\?|\bthis (?:week|weekend|month|year|season)\b|\b(?:last|next) (?:week|weekend|month|year|night)\b|\b20(?:2[4-9]|3[0-5])\b/i;
+
+const EN_FACT_CUE =
+  /\b(?:temperature|rain(?:ing)?|snow(?:ing)?|traffic|results?|fixtures?|match(?:es)?|events?|happen(?:ed|ing)|going on|flights?|trains?|concerts?|releases|launch(?:es|ed)?|updates|update on|announce(?:d|ment|ments)?|holidays?|open|opening hours|closed|ceo|president|prime minister|minister|champions?|winners?|leading|population|rankings?|showing|airing)\b|\bwho (?:is|are|was)\b|\bwhat time\b|\bwhen (?:is|does|will|do)\b|\bwhat(?:'s| is| are)\s+(?:new|happening|on)\b|\b(?:what|when)(?:'s| is| are)?\b[^.?!\n]{0,30}\bschedule/i;
+
+// A year alone ("a greeting card for 2026") is not a lookup; "best phones of 2026" is.
+const EN_YEAR_FACT_CUE = /\b(?:best|top|upcoming|trends?|predictions?|calendar)\b/i;
+const EN_YEAR = /\b20(?:2[4-9]|3[0-5])\b/;
+
 const KO_LIVE_CUES: RegExp[] = [
-  /오늘|어제|내일|모레|올해|이번\s?(?:주|달|시즌)|요즘\s*(?:유행|인기|뜨는|핫한|화제)/,
-  /지금\s*(?:몇\s*시|상황|어떻게|진행)|현재|최신|최근/,
+  /요즘\s*(?:유행|인기|뜨는|핫한|화제)/,
+  /지금\s*몇\s*시|최신/,
   /뉴스|속보|헤드라인/,
   /날씨|기온|일기\s?예보|예보/,
   /가격|시세|주가|주식|환율|비트코인|코인|암호화폐/,
   /검색|찾아\s?봐|알아\s?봐|인터넷에서\s*찾|웹에서\s*찾/,
   /(?:경기|선거|시합|투표|개표|시험|추첨|발표)\s?결과|결과\s?발표|누가\s?(?:이겼|우승|당선)|선거|스코어/,
   /(?:경기|공연|콘서트|투어|개봉|발매|시험|토픽)\s?일정|개봉일|출시일|발매일/,
-  /사실(?:이야|인가|이에요|인지|여부)|진짜야|팩트\s?체크|확인해\s?(?:줘|봐|주세요)/,
+  // "확인해줘" alone is also "check my code"; it counts next to a fact word.
+  /사실(?:이야|인가|이에요|인지|여부)|진짜야|팩트\s?체크|(?:사실|뉴스|소식|정보|진짜)[^.?!\n]{0,20}확인해\s?(?:줘|봐|주세요)/,
 ];
+
+const KO_TIME_CUE = /오늘|어제|내일|모레|올해|이번\s?(?:주|달|시즌)|현재|최근|지금/;
+
+const KO_FACT_CUE =
+  /소식|경기|결과|일정|몇\s*시|몇\s*도|무슨\s*일|사건|개봉|발표|순위|이슈|교통|항공편|비행기|열차|운행|영업|휴무|공휴일|휴일|행사|축제|공연|업데이트|출시|(?<![가-힯])비\s*(?:가\s*)?(?:와|오|올|내)|(?<![가-힯])눈\s*(?:이\s*)?(?:와|오|올|내)|미세\s*먼지|황사|우산/;
 
 /** True when a message asks for time-sensitive or verifiable facts. */
 export function needsLiveSearch(text: string): boolean {
   const normalized = text.normalize("NFC");
   if (!normalized.trim()) return false;
-  return EN_LIVE_CUES.some((re) => re.test(normalized)) || KO_LIVE_CUES.some((re) => re.test(normalized));
+  if (EN_LIVE_CUES.some((re) => re.test(normalized)) || KO_LIVE_CUES.some((re) => re.test(normalized))) return true;
+  if (EN_TIME_CUE.test(normalized) && EN_FACT_CUE.test(normalized)) return true;
+  if (EN_YEAR.test(normalized) && EN_YEAR_FACT_CUE.test(normalized)) return true;
+  return KO_TIME_CUE.test(normalized) && KO_FACT_CUE.test(normalized);
+}
+
+// ─── Follow-ups ─────────────────────────────────────────────────────────────
+// "And tomorrow?" after "What's the weather in Busan today?" means nothing on
+// its own, so both routing and the search query borrow the earlier turns.
+
+const FOLLOW_UP_START =
+  /^\s*(?:and|also|what\s+about|how\s+about|what\s+if)\b|^\s*(?:그럼|그러면|그리고|그런데|근데|그건|그거는)(?![가-힯])/i;
+const MAX_FOLLOW_UP_WORDS = 4;
+
+/** A short question that continues the previous turn ("And tomorrow?", "What about Daegu?", "내일은?"). */
+export function isFollowUp(text: string): boolean {
+  const t = text.normalize("NFC").trim();
+  if (!t) return false;
+  if (FOLLOW_UP_START.test(t)) return true;
+  return t.split(/\s+/).length <= MAX_FOLLOW_UP_WORDS && (/\?\s*$/.test(t) || /[은는]\s*\?*\s*$/.test(t));
+}
+
+/** Earlier user turns (oldest first) that a follow-up builds on: the last one, plus earlier ones while those are follow-ups too. */
+function followUpChain(previous: readonly string[]): string[] {
+  const chain: string[] = [];
+  for (let i = previous.length - 1; i >= 0 && chain.length < 3; i--) {
+    const turn = previous[i].trim();
+    if (!turn) continue;
+    chain.unshift(turn);
+    if (!isFollowUp(turn)) break;
+  }
+  return chain;
+}
+
+/** A follow-up to a conversation that was already about live facts. */
+export function isSearchFollowUp(text: string, previous: readonly string[]): boolean {
+  return isFollowUp(text) && followUpChain(previous).some(needsLiveSearch);
+}
+
+/**
+ * Search query for the latest turn without an LLM: a follow-up gets the
+ * earlier turns it builds on ("What's the weather in Busan today? And
+ * tomorrow?"), when those were live-fact questions or it opens with "and",
+ * "what about", 그럼, ...
+ */
+export function contextualSearchQuery(text: string, previous: readonly string[]): string {
+  const latest = text.trim();
+  if (!isFollowUp(latest)) return latest;
+  const chain = followUpChain(previous);
+  if (chain.length === 0 || !(FOLLOW_UP_START.test(latest) || chain.some(needsLiveSearch))) return latest;
+  return [...chain.map((turn) => truncate(turn, 150)), latest].join(" ");
 }
 
 // ─── Result normalization ───────────────────────────────────────────────────

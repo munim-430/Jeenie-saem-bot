@@ -2,21 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, isAbortError, requestSpeech } from "@/lib/client/api";
+import { speechSegments, type SpeechLang, type SpeechSegment } from "@/lib/client/speech-text";
 import type { ResolvedLang, TtsEngine } from "@/lib/types";
-import { detectLanguage, stripMarkdownForSpeech } from "@/lib/utils";
 
 // Jeannie's voice: server TTS (ElevenLabs / Edge neural) played through a shared
 // AudioContext + AnalyserNode so the orb and spectrum react to the real signal,
 // falling back to the browser's speechSynthesis with a synthetic level.
 
-type SpeechLang = "en" | "ko";
-
-interface SpeechSegment {
-  text: string;
-  lang: SpeechLang;
-}
-
-const TTS_MAX_CHARS = 1900; // /api/tts accepts up to 2000
 const SERVER_BACKOFF_MS = 60_000; // after a 503/404/network failure, go straight to the browser voice for a while
 const BROWSER_CHUNK_CHARS = 220; // Chrome cuts long utterances off after ~15 s
 
@@ -25,30 +17,6 @@ type AudioContextCtor = typeof AudioContext;
 function audioContextCtor(): AudioContextCtor | null {
   const w = window as unknown as { AudioContext?: AudioContextCtor; webkitAudioContext?: AudioContextCtor };
   return w.AudioContext ?? w.webkitAudioContext ?? null;
-}
-
-function clip(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const head = text.slice(0, max);
-  const cut = Math.max(
-    head.lastIndexOf(". "),
-    head.lastIndexOf("? "),
-    head.lastIndexOf("! "),
-    head.lastIndexOf("다. "),
-  );
-  return cut > max * 0.5 ? head.slice(0, cut + 1) : head;
-}
-
-/** Splits a reply into speakable segments; bilingual replies are split at the "—" separator line. */
-export function speechSegments(text: string, lang: ResolvedLang | null): SpeechSegment[] {
-  const parts = lang === "en" || lang === "ko" ? [text] : text.split(/^\s*(?:[—–]{1,2}|-{3,})\s*$/m);
-  return parts
-    .map((part) => stripMarkdownForSpeech(part.replace(/\s*\[\d{1,2}\]/g, "")).trim())
-    .filter((part) => part.length > 0)
-    .map((part) => ({
-      text: clip(part, TTS_MAX_CHARS),
-      lang: lang === "en" || lang === "ko" ? lang : detectLanguage(part),
-    }));
 }
 
 function sentenceChunks(text: string, max: number): string[] {
@@ -108,20 +76,39 @@ function silentWav(): string {
   return silentWavUrl;
 }
 
-function waitForEnd(element: HTMLAudioElement, signal: AbortSignal): Promise<void> {
+/**
+ * Resolves when playback is over: "ended" (or failed), "aborted" by stop(), or
+ * "interrupted" when something outside the app paused it (OS media controls,
+ * headphones unplugged, a phone call). Only "ended" plays on to the next segment.
+ */
+function waitForEnd(element: HTMLAudioElement, signal: AbortSignal): Promise<"ended" | "aborted" | "interrupted"> {
   return new Promise((resolve) => {
-    const done = () => {
-      element.removeEventListener("ended", done);
-      element.removeEventListener("error", done);
-      signal.removeEventListener("abort", done);
-      resolve();
+    const finish = (outcome: "ended" | "aborted" | "interrupted") => {
+      element.removeEventListener("ended", onEnded);
+      element.removeEventListener("error", onEnded);
+      element.removeEventListener("pause", onPause);
+      element.removeEventListener("emptied", onPause);
+      signal.removeEventListener("abort", onAbort);
+      resolve(outcome);
     };
-    element.addEventListener("ended", done);
-    element.addEventListener("error", done);
-    signal.addEventListener("abort", done);
-    if (signal.aborted) done();
+    const onEnded = () => finish("ended");
+    const onAbort = () => finish("aborted");
+    // A natural end also fires "pause" first, with `ended` already true.
+    const onPause = () => {
+      if (signal.aborted) finish("aborted");
+      else if (!element.ended) finish("interrupted");
+    };
+    element.addEventListener("ended", onEnded);
+    element.addEventListener("error", onEnded);
+    element.addEventListener("pause", onPause);
+    element.addEventListener("emptied", onPause);
+    signal.addEventListener("abort", onAbort);
+    if (signal.aborted) finish("aborted");
   });
 }
+
+/** How one segment went on the server voice: played, hand over to the browser voice, or stop reading. */
+type ServerOutcome = "played" | "fallback" | "halt";
 
 export interface SpeechOutput {
   /** Audio is audibly playing. */
@@ -156,6 +143,8 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
   const sharedAudioRef = useRef<HTMLAudioElement | null>(null);
   const sharedRoutedRef = useRef(false);
   const primedRef = useRef(false);
+  const primingRef = useRef(false);
+  const synthPrimedRef = useRef(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
@@ -196,8 +185,15 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
     return sharedAudioRef.current;
   }, []);
 
-  /** Creates/resumes the AudioContext and primes playback. Must run inside a user gesture. */
+  /**
+   * Creates/resumes the AudioContext and primes playback inside a user gesture.
+   * It runs on every gesture until the priming actually succeeds: a touch
+   * pointerdown is not an activation, and play() rejects there.
+   */
   const unlock = useCallback(() => {
+    // Outside an activating event this would only be refused (and Chrome warns about
+    // the AudioContext); the pointerup / click of the same tap comes right after.
+    if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.isActive) return;
     const Ctor = audioContextCtor();
     if (!ctxRef.current && Ctor) {
       try {
@@ -207,16 +203,35 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
       }
     }
     const ctx = ctxRef.current;
-    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => undefined);
-    if (!primedRef.current) {
-      primedRef.current = true;
-      const audio = sharedAudio();
-      audio.src = silentWav();
-      audio.play().then(
-        () => audio.pause(),
-        () => undefined,
-      );
+    // "suspended", or iOS's "interrupted" after a call or another app took the audio.
+    if (ctx && ctx.state !== "running" && ctx.state !== "closed") void ctx.resume().catch(() => undefined);
+
+    // iOS only lets speechSynthesis talk after a first utterance inside a gesture.
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+    if (!synthPrimedRef.current && synth && typeof SpeechSynthesisUtterance !== "undefined" && !synth.speaking && !synth.pending) {
+      synthPrimedRef.current = true;
+      try {
+        synth.speak(new SpeechSynthesisUtterance(""));
+      } catch {
+        synthPrimedRef.current = false;
+      }
     }
+
+    const audio = sharedAudio();
+    // Never swap the source of a reply that is playing or about to play.
+    if (primedRef.current || primingRef.current || currentAudioRef.current === audio || !audio.paused) return;
+    primingRef.current = true;
+    audio.src = silentWav();
+    audio.play().then(
+      () => {
+        primedRef.current = true;
+        primingRef.current = false;
+        if (currentAudioRef.current !== audio) audio.pause();
+      },
+      () => {
+        primingRef.current = false; // retried on the next gesture
+      },
+    );
   }, [sharedAudio]);
 
   /** The element to play through: the analyser-routed one when the context is running, else a plain one. */
@@ -290,36 +305,38 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
     activeRef.current = false;
   }, []);
 
-  /** Server voice for one segment. Resolves false when the browser voice should take over. */
+  /** Server voice for one segment. */
   const playServer = useCallback(
-    async (segment: SpeechSegment, signal: AbortSignal, generation: number): Promise<boolean> => {
+    async (segment: SpeechSegment, signal: AbortSignal, generation: number): Promise<ServerOutcome> => {
       let audio: Blob;
       let serverEngine: TtsEngine;
       try {
         ({ audio, engine: serverEngine } = await requestSpeech({ text: segment.text, lang: segment.lang }, signal));
       } catch (error) {
-        if (isAbortError(error)) return true;
+        if (isAbortError(error)) return "played";
         // 400 (e.g. nothing_to_speak): nothing worth saying in this segment; skip it, no fallback.
-        if (error instanceof ApiRequestError && error.status === 400) return true;
+        if (error instanceof ApiRequestError && error.status === 400) return "played";
         if (error instanceof ApiRequestError && (error.status === 503 || error.status === 404 || error.status === 0)) {
           serverDownUntilRef.current = Date.now() + SERVER_BACKOFF_MS;
         }
-        return false;
+        return "fallback";
       }
-      if (generation !== generationRef.current) return true;
+      if (generation !== generationRef.current) return "played";
 
       const { element, routed: isRouted } = await playbackElement();
-      if (generation !== generationRef.current) return true;
+      if (generation !== generationRef.current) return "played";
       const url = URL.createObjectURL(audio);
       currentAudioRef.current = element;
       try {
         element.src = url;
         beginPlayback(serverEngine, isRouted ? analyserLevel() : syntheticLevel(), isRouted);
         await element.play();
-        await waitForEnd(element, signal);
-        return true;
+        if (element === sharedAudioRef.current) primedRef.current = true;
+        // Paused from outside the app: stop reading instead of hanging in SPEAKING,
+        // and don't carry on with the next segment through the speakers.
+        return (await waitForEnd(element, signal)) === "interrupted" ? "halt" : "played";
       } catch {
-        return signal.aborted; // autoplay refusal or decode error → browser voice
+        return signal.aborted ? "played" : "fallback"; // autoplay refusal or decode error → browser voice
       } finally {
         endPlayback();
         URL.revokeObjectURL(url);
@@ -377,6 +394,7 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
     activeRef.current = false;
     setSpeaking(false);
     setPreparing(false);
+    setRouted(false);
   }, []);
 
   const speak = useCallback(
@@ -394,9 +412,9 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
           for (const segment of segments) {
             if (generation !== generationRef.current) return;
             const useServer = serverVoiceRef.current && Date.now() >= serverDownUntilRef.current;
-            const played = useServer && (await playServer(segment, controller.signal, generation));
-            if (generation !== generationRef.current) return;
-            if (!played) await playBrowser(segment, generation);
+            const outcome = useServer ? await playServer(segment, controller.signal, generation) : "fallback";
+            if (generation !== generationRef.current || outcome === "halt") return;
+            if (outcome === "fallback") await playBrowser(segment, generation);
           }
         } finally {
           if (generation === generationRef.current) {
@@ -404,6 +422,7 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
             abortRef.current = null;
             setSpeaking(false);
             setPreparing(false);
+            setRouted(false);
           }
         }
       })();
@@ -415,14 +434,14 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
     serverVoiceRef.current = serverVoice;
   }, [serverVoice]);
 
-  // Unlock audio on the first (and any later) user gesture; cheap once unlocked.
+  // Unlock audio on user gestures; cheap once unlocked. Touch activation comes on
+  // pointerup / touchend / click (not pointerdown), so listen to all of them.
   useEffect(() => {
     const onGesture = () => unlock();
-    window.addEventListener("pointerdown", onGesture, true);
-    window.addEventListener("keydown", onGesture, true);
+    const events = ["pointerdown", "pointerup", "touchend", "click", "keydown"] as const;
+    for (const type of events) window.addEventListener(type, onGesture, true);
     return () => {
-      window.removeEventListener("pointerdown", onGesture, true);
-      window.removeEventListener("keydown", onGesture, true);
+      for (const type of events) window.removeEventListener(type, onGesture, true);
     };
   }, [unlock]);
 

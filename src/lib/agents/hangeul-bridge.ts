@@ -3,7 +3,7 @@
 // portal configured; everyone else gets clearly labelled, deterministic demo
 // data. Edge-safe (fetch + btoa, no Node APIs).
 
-import { getEnv, hangeulLiveConfigured } from "../env";
+import { getEnv, hangeulLiveConfigured, type JeannieEnv } from "../env";
 import type { HangeulMetric, HangeulReport, HangeulStatus, ResolvedLang } from "../types";
 import { truncate } from "../utils";
 import { withTimeout } from "./search-agent";
@@ -15,34 +15,91 @@ const MAX_HIGHLIGHTS = 10;
 // ─── Routing ────────────────────────────────────────────────────────────────
 // "Hangeul"/한글 alone is also the Korean alphabet ("teach me hangeul",
 // "한글로 보고서 써줘"), so it only routes here next to an admin/portal cue.
+// Every pattern runs on normalizeQuery() output (single spaces, no newlines)
+// and never stacks optional quantifiers, so matching stays linear in the input
+// length: a long run of whitespace used to backtrack cubically here.
+
+/** One space between words, straight apostrophes, composed Hangul. */
+function normalizeQuery(text: string): string {
+  return text.normalize("NFC").replace(/[\u2018\u2019\u02bc`]/g, "'").replace(/\s+/g, " ").trim();
+}
+
+// up/down only count as a verdict ("is the portal up?"), not as part of a phrasal
+// verb ("hangeul, pull up the dashboard", "is hangeul hard to pick up?").
+const UP_DOWN_EN =
+  "(?<!\\b(?:pick|pull|look|set|sign|show|bring|call|type|write|draw|sum|follow|catch|keep|make|give|take|put|hang|mess|hand|slow|calm|fill|mix|clean|warm|speed) )" +
+  "(?:up|down)(?= ?(?:$|[?!.,;:)]|or\\b|and running\\b|right now\\b|now\\b|at the moment\\b|again\\b))";
 
 const EN_HANGEUL_CUES: RegExp[] = [
-  /\b(?:admin|daily)\s+reports?\b/i,
-  /\bhangeul(?:'s)?\s+(?:(?:daily|admin|today'?s)\s+)?(?:reports?|briefing|summary|status|dashboard|portal|admin|academy|institute|school|system|server|site|website|backend|metrics|stats|numbers|students|enrol{1,2}ments?|attendance|payments?|operations)\b/i,
-  /\b(?:portal|admin|dashboard)\b[\s\S]{0,40}\bhangeul\b|\bhangeul\b[\s\S]{0,40}\b(?:portal|admin|dashboard)\b/i,
-  /\b(?:report|status|numbers|metrics|stats)\s+(?:from|of|for)\s+(?:the\s+)?hangeul\b/i,
-  /\bis\s+(?:the\s+)?hangeul\b[\s\S]{0,30}\b(?:up|down|online|offline)\b/i,
-  /\b(?:check|ping)\s+(?:on\s+)?(?:the\s+)?hangeul\b/i,
+  /\b(?:admin|daily) reports?\b/i,
+  /\bhangeul(?:'s)? (?:(?:daily|admin|today'?s) )?(?:reports?|briefing|summary|status|dashboard|portal|admin|academy|institute|school|system|server|site|website|backend|metrics|stats|numbers|students|enrol{1,2}ments?|attendance|payments?|operations)\b/i,
+  /\b(?:portal|admin|dashboard)\b.{0,40}\bhangeul\b|\bhangeul\b.{0,40}\b(?:portal|admin|dashboard)\b/i,
+  /\b(?:report|status|numbers|metrics|stats) (?:from|of|for) (?:the )?hangeul\b/i,
+  new RegExp(`\\bis (?:the )?hangeul\\b.{0,30}\\b(?:${UP_DOWN_EN}|(?:online|offline)\\b)`, "i"),
+  new RegExp(`\\bhangeul(?: is)? (?:${UP_DOWN_EN}|(?:offline|unreachable)\\b)`, "i"),
+  /\b(?:check|ping) (?:on )?(?:the )?hangeul\b/i,
   /\bhangeul\.com\b/i,
+  /\b(?:what's|what is|send|show|give|get|pull|fetch|read) (?:me |us )?(?:in )?today'?s (?:daily |admin )?report\b(?! (?:on|about) )/i,
+  // "Send me the report" on its own; "show me the report on climate change" is not ours.
+  /\b(?:send|show|give|get|pull|fetch) (?:me |us )?the (?:daily )?report(?: for today| today)?[.!?]*$/i,
+  // The portal is the admin portal even without the word hangeul ("is the admin portal down?").
+  /\b(?:admin|the|our) portal\b.{0,20}\b(?:up|down|online|offline|status|reachable)\b/i,
 ];
 
+// "at/from Hangeul" and academy metrics are ours only with academy context:
+// "I'm bad at hangeul" and "the attendance at the World Cup final" are not.
+const EN_AT_HANGEUL = /\b(?:at|from) (?:the )?hangeul\b/i;
+const EN_ACADEMY_WORDS =
+  /\b(?:students?|pupils|enrol{1,2}(?:ed|ing|ments?)?|attendance|payments?|fees|tuition|classes|lessons|teachers?|staff|revenue|enquir(?:y|ies)|inquir(?:y|ies)|registrations?|numbers|stats|metrics)\b/i;
+const EN_METRICS =
+  /\b(?:enrol{1,2}(?:ments?|ed)|attendance|pending payments?|unpaid (?:fees|tuition)|outstanding (?:fees|payments?|tuition)|active students|topik registrations?)\b/i;
+const EN_OWNER = /\b(?:our|hangeul|academy|today's|this (?:week|month)'s)\b/i;
+
 const KO_HANGEUL_CUES: RegExp[] = [
-  /한글\s*(?:포털|관리자|어드민|리포트|보고서|현황|시스템|서버|사이트|대시보드)/,
-  /한글\s*학원\s*(?:보고서|리포트|현황|상태|관리)/,
-  /(?:관리자|어드민)\s*(?:리포트|보고서|현황|페이지)/,
-  /(?:일일|데일리)\s*(?:리포트|보고서)/,
+  /한글 ?(?:포털|관리자|어드민|리포트|보고서|현황|시스템|서버|사이트|대시보드)/,
+  /(?:관리자|어드민) ?(?:리포트|보고서|현황|페이지)/,
+  /(?:일일|데일리) ?(?:리포트|보고서)/,
+  /포털 ?(?:상태|현황|접속)/,
+  /학원 ?(?:보고서|리포트|현황|상태|관리|재원생|출석|미납|수강생)/,
+  /재원생/,
+  // 출석률 and 미납 are also used for parliament attendance or unpaid taxes, so they need academy context.
+  /(?:오늘|우리|학원|수업|이번 ?(?:주|달)).{0,12}(?:출석률|출석 ?현황)/,
+  /미납 ?(?:건|학생|원생)|(?:수강료|학원비|원비) ?미납|(?:오늘|학원).{0,12}미납/,
 ];
 
 export function isHangeulQuery(text: string): boolean {
-  const normalized = text.normalize("NFC");
-  return EN_HANGEUL_CUES.some((re) => re.test(normalized)) || KO_HANGEUL_CUES.some((re) => re.test(normalized));
+  const t = normalizeQuery(text);
+  if (EN_HANGEUL_CUES.some((re) => re.test(t)) || KO_HANGEUL_CUES.some((re) => re.test(t))) return true;
+  if (EN_AT_HANGEUL.test(t) && EN_ACADEMY_WORDS.test(t)) return true;
+  return EN_METRICS.test(t) && EN_OWNER.test(t);
 }
 
-/** Health-check wording ("is the portal up?", "한글 포털 상태") rather than a report request. */
+// A report request that mentions a status word ("the report on payment status",
+// "수강생 출석 상태") still wants the report, not a portal health check.
+const REPORT_WORDS =
+  /\b(?:reports?|briefing|summary|metrics|stats|numbers|students|enrol{1,2}(?:ed|ments?)|attendance|payments?|enquir(?:y|ies)|registrations?)\b|보고서|리포트|현황|통계|재원생|출석|미납|수강생/i;
+const SYSTEM_EN = "(?:hangeul|portal|server|site|website|system|backend|dashboard)";
+const STATE_EN = `(?:(?:status|online|offline|reachable|unreachable|uptime|downtime|health|healthy|alive)\\b|${UP_DOWN_EN})`;
+const STATUS_CUES: RegExp[] = [
+  new RegExp(`\\b${SYSTEM_EN}\\b.{0,24}\\b${STATE_EN}`, "i"),
+  new RegExp(`\\b(?:status|uptime|health|ping|reachability)\\b.{0,16}\\b${SYSTEM_EN}\\b`, "i"),
+  /(?:포털|서버|사이트|시스템|홈페이지|대시보드|관리자 ?페이지|한글).{0,8}(?:상태|접속|정상|다운|작동|먹통|살아)/,
+];
+
+/** Health-check wording about the portal itself ("is the portal up?", "한글 포털 상태") rather than a report request. */
 export function isHangeulStatusQuery(text: string): boolean {
-  return /\b(?:status|online|offline|ping|health|healthy|reachable|uptime)\b|\b(?:up|down)\s*(?:right now|now)?\s*\??\s*$|상태|접속|작동|정상|다운/i.test(
-    text,
-  );
+  const t = normalizeQuery(text);
+  if (REPORT_WORDS.test(t)) return false;
+  return STATUS_CUES.some((re) => re.test(t));
+}
+
+/**
+ * What the HUD actually gets: live data needs the portal configured and a
+ * trusted caller, and HUD requests are only trusted with a valid
+ * JEANNIE_ACCESS_KEY, so without one the HUD always sees demo data.
+ */
+export function hangeulHudMode(env: JeannieEnv = getEnv()): "live" | "mock" {
+  return hangeulLiveConfigured(env) && Boolean(env.accessKey) ? "live" : "mock";
 }
 
 // ─── Deterministic demo data ────────────────────────────────────────────────
@@ -137,7 +194,11 @@ function mockReport(now: Date, source: "mock" | "mock-fallback", note: string): 
 
 /** Joins a portal path onto the base URL, keeping the base path (`/admin` + `/api/x` → `/admin/api/x`). */
 export function joinUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.trim().replace(/\/+$/, "");
+  // A scan, not /\/+$/: that regex is quadratic on a long run of slashes.
+  const trimmed = baseUrl.trim();
+  let end = trimmed.length;
+  while (end > 0 && trimmed[end - 1] === "/") end--;
+  const base = trimmed.slice(0, end);
   const relative = path.trim().replace(/^\/+/, "");
   return new URL(relative, `${base}/`).toString();
 }
