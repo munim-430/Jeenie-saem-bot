@@ -53,7 +53,7 @@ Edge neural voice, camera, and the mock Hangeul report all work. Add `OPENAI_API
    - The framework preset is detected as **Next.js**.
 3. **Set environment variables.**
    - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
-   - At minimum, set `OPENAI_API_KEY` and `TAVILY_API_KEY`.
+   - At minimum, set `OPENAI_API_KEY` and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
    - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
 4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
 5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
@@ -71,8 +71,9 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
 
-Send `/whoami` to the bot, put the chat id it returns in `TELEGRAM_ADMIN_CHAT_ID`, and redeploy.
-After that, only that chat gets answers or live Hangeul data.
+`TELEGRAM_WEBHOOK_SECRET` is required. Without it the webhook refuses every update (HTTP 503), so nobody can forge messages to your bot.
+Until `TELEGRAM_ADMIN_CHAT_ID` is set, the bot answers only `/start`, `/help` and `/whoami`. Send `/whoami`, put the chat id it returns in
+`TELEGRAM_ADMIN_CHAT_ID`, and redeploy. From then on only that chat gets answers, live search, and live Hangeul data.
 
 ## Configuration
 
@@ -86,8 +87,8 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
 | `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Premium voice. `eleven_multilingual_v2` speaks Korean. |
-| `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO` | Free Microsoft neural voices, used when ElevenLabs is off or fails. |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. |
+| `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. The webhook secret is required, and only the admin chat gets answers. |
 | `HANGEUL_BASE_URL`, `HANGEUL_USERNAME`, `HANGEUL_PASSWORD`, `HANGEUL_REPORT_PATH`, `HANGEUL_STATUS_PATH`, `MOCK_MODE` | Hangeul admin portal. See below. |
 | `CRON_SECRET` | Authenticates the Vercel Cron call to `/api/hangeul`. |
 
