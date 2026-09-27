@@ -54,7 +54,7 @@ const EN_LIVE_CUES: RegExp[] = [
 ];
 
 const KO_LIVE_CUES: RegExp[] = [
-  /오늘|어제|내일|모레|올해|이번\s?(?:주|달|시즌)|요즘/,
+  /오늘|어제|내일|모레|올해|이번\s?(?:주|달|시즌)|요즘\s*(?:유행|인기|뜨는|핫한|화제)/,
   /지금\s*(?:몇\s*시|상황|어떻게|진행)|현재|최신|최근/,
   /뉴스|속보|헤드라인/,
   /날씨|기온|일기\s?예보|예보/,
@@ -321,6 +321,17 @@ async function duckDuckGoInstant(query: string, signal: AbortSignal): Promise<Pr
 }
 
 async function duckDuckGoHtml(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
+  try {
+    return await duckDuckGoHtmlOnce(query, signal);
+  } catch (error) {
+    // The challenge is served to a random share of requests; one retry usually gets through.
+    if (!(error instanceof ProviderError && error.message === "bot challenge") || signal.aborted) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return duckDuckGoHtmlOnce(query, signal);
+  }
+}
+
+async function duckDuckGoHtmlOnce(query: string, signal: AbortSignal): Promise<ProviderOutcome> {
   // POST: the GET form of this endpoint is answered with a bot challenge far more often.
   const res = await fetch("https://html.duckduckgo.com/html/", {
     method: "POST",
@@ -384,6 +395,8 @@ function describeError(error: unknown): string {
 export interface WebSearchOptions {
   maxResults?: number;
   signal?: AbortSignal | null;
+  /** Per-provider budget; 8 s by default (tests shorten it). */
+  providerTimeoutMs?: number;
 }
 
 /** Runs the provider chain; never throws. Each provider gets 8 s before the next one is tried. */
@@ -396,7 +409,7 @@ export async function webSearch(query: string, options: WebSearchOptions = {}): 
   for (const { id, run } of providerChain(getEnv())) {
     if (options.signal?.aborted) break;
     try {
-      const outcome = await run(q, maxResults, withTimeout(PROVIDER_TIMEOUT_MS, options.signal));
+      const outcome = await run(q, maxResults, withTimeout(options.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, options.signal));
       const results = dedupeResults(outcome.results).slice(0, maxResults);
       if (results.length > 0 || outcome.answer) {
         const response: SearchResponse = { query: q, provider: id, results };

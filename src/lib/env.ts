@@ -19,10 +19,22 @@ function readBool(name: string, fallback: boolean): boolean {
   return /^(1|true|yes|on)$/i.test(value);
 }
 
+/** A loopback Ollama URL can never be reached from a Vercel function. */
+function reachableOllamaUrl(): string | undefined {
+  const url = read("OLLAMA_BASE_URL");
+  if (!url || !process.env.VERCEL) return url;
+  try {
+    const host = new URL(url).hostname;
+    return /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|0\.0\.0\.0)$/i.test(host) ? undefined : url;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getEnv() {
   const openaiKey = read("OPENAI_API_KEY");
   const requestedProvider = (read("LLM_PROVIDER") ?? "auto").toLowerCase();
-  const ollamaBaseUrl = read("OLLAMA_BASE_URL");
+  const ollamaBaseUrl = reachableOllamaUrl();
 
   let llmProvider: LlmProvider = "none";
   if (requestedProvider === "openai") llmProvider = openaiKey ? "openai" : "none";

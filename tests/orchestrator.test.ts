@@ -1,0 +1,417 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { simulateReadableStream } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { routeQuery, runOrchestrator, runOrchestratorToText } from "@/lib/agents/orchestrator";
+import { IMAGE_PLACEHOLDER } from "@/lib/agents/vision-agent";
+import type { ChatMessage } from "@/lib/types";
+
+/** LanguageModelV4 stream part, derived from the mock so tests need no transitive import. */
+type StreamPart = Awaited<ReturnType<MockLanguageModelV4["doStream"]>>["stream"] extends ReadableStream<infer T> ? T : never;
+
+const usage = {
+  inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+  outputTokens: { total: 5, text: 5, reasoning: 0 },
+};
+const finish = (reason: "stop" | "tool-calls" = "stop") => ({ type: "finish", usage, finishReason: { unified: reason, raw: reason } });
+const textParts = (...deltas: string[]) => [
+  { type: "text-start", id: "t" },
+  ...deltas.map((delta) => ({ type: "text-delta", id: "t", delta })),
+  { type: "text-end", id: "t" },
+];
+
+/** Mock model: each call to doStream plays the next script (the last one repeats). */
+function mockModel(...scripts: unknown[][]) {
+  let call = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      const chunks = scripts[Math.min(call++, scripts.length - 1)] as StreamPart[];
+      return { stream: simulateReadableStream({ chunks, initialDelayInMs: null, chunkDelayInMs: null }) };
+    },
+  });
+}
+
+function systemPrompt(model: MockLanguageModelV4, call = 0): string {
+  const first = model.doStreamCalls[call]?.prompt[0];
+  return first?.role === "system" ? first.content : "";
+}
+
+const user = (content: string, image?: string): ChatMessage => ({ role: "user", content, image });
+const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+const DDG_INSTANT = {
+  Heading: "Seoul",
+  AbstractText: "Seoul is the capital of South Korea.",
+  AbstractURL: "https://en.wikipedia.org/wiki/Seoul",
+  Results: [],
+  RelatedTopics: Array.from({ length: 7 }, (_, i) => ({
+    FirstURL: `https://duckduckgo.com/Topic_${i}`,
+    Text: `${"Very long topic title ".repeat(5)}${i} - snippet ${i}`,
+    Result: `<a href="https://duckduckgo.com/Topic_${i}">${"Very long topic title ".repeat(5)}${i}</a> - snippet ${i}`,
+  })),
+};
+
+function stubSearch(instant: unknown = DDG_INSTANT) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.startsWith("https://api.duckduckgo.com/")) return new Response(JSON.stringify(instant), { status: 202 });
+    return new Response("<html></html>", { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+beforeEach(() => {
+  for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
+    vi.stubEnv(name, "");
+  }
+  for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE"]) vi.stubEnv(name, "");
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("routeQuery", () => {
+  it.each([
+    [{ text: "Turn on the living room lights", hasImage: false }, "iot", "en"],
+    [{ text: "거실 불 꺼줘", hasImage: false }, "iot", "ko"],
+    [{ text: "set the thermostat to 22 degrees", hasImage: true }, "iot", "en"],
+    [{ text: "불 켜줘", hasImage: false, lang: "en" as const }, "iot", "en"],
+    [{ text: "Show me the Hangeul report", hasImage: false }, "hangeul", "en"],
+    [{ text: "한글 포털 상태 확인해줘", hasImage: true }, "hangeul", "ko"],
+    [{ text: "What does this sign say?", hasImage: true }, "vision", "en"],
+    [{ text: "", hasImage: true, lang: "bilingual" as const }, "vision", "bilingual"],
+    [{ text: "What's the latest news on the Fed?", hasImage: false }, "search", "en"],
+    [{ text: "오늘 서울 날씨 어때?", hasImage: false }, "search", "ko"],
+    [{ text: "Write me a haiku about neon rain", hasImage: false }, "core", "en"],
+    [{ text: "Write me a haiku", hasImage: false, lang: "ko" as const }, "core", "ko"],
+    [{ text: "Explain kimchi bilingually", hasImage: false }, "core", "bilingual"],
+  ])("%j → %s (%s)", (input, agent, lang) => {
+    const route = routeQuery(input);
+    expect(route.agent).toBe(agent);
+    expect(route.lang).toBe(lang);
+    expect(route.reason).toBeTruthy();
+  });
+});
+
+describe("IoT interceptor path", () => {
+  it.each([
+    ["Turn off the bedroom fan", undefined, "Yes, it is done."],
+    ["에어컨 켜줘", undefined, "네, 처리되었습니다."],
+    ["lock the front door", "ko" as const, "네, 처리되었습니다."],
+  ])("answers %j with the exact sentence, no network and no LLM", async (text, lang, expected) => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    const fetchMock = vi.fn(async () => {
+      throw new Error("network must not be used");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const model = mockModel(textParts("should not be used"));
+
+    const result = await runOrchestratorToText({ messages: [user(text)], lang }, { trusted: true, model });
+    expect(result).toEqual({ agent: "iot", lang: expected === "Yes, it is done." ? "en" : "ko", provider: "none", sources: [], text: expected });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
+});
+
+describe("offline mode (no LLM configured)", () => {
+  it("core and vision answer with a short setup hint in the resolved language", async () => {
+    const en = await runOrchestratorToText({ messages: [user("Write a poem")] }, { trusted: false });
+    expect(en).toMatchObject({ agent: "offline", provider: "none", lang: "en", sources: [] });
+    expect(en.text).toContain("OPENAI_API_KEY");
+    expect(en.text).toContain("OLLAMA_BASE_URL");
+
+    const ko = await runOrchestratorToText({ messages: [user("시 한 편 써줘")] }, { trusted: false });
+    expect(ko.lang).toBe("ko");
+    expect(ko.text).toContain("오프라인 모드");
+
+    const vision = await runOrchestratorToText({ messages: [user("what is this?")], image: PNG }, { trusted: false });
+    expect(vision.agent).toBe("offline");
+    expect(vision.text).toMatch(/vision/i);
+  });
+
+  it("search still works and returns raw results with sources", async () => {
+    stubSearch();
+    const result = await runOrchestratorToText({ messages: [user("latest news about Seoul")] }, { trusted: false });
+    expect(result.agent).toBe("search");
+    expect(result.provider).toBe("none");
+    expect(result.sources).toHaveLength(5);
+    expect(result.sources[0]).toEqual({ title: "Seoul", url: "https://en.wikipedia.org/wiki/Seoul" });
+    for (const s of result.sources) expect(s.title.length).toBeLessThanOrEqual(80);
+    expect(result.text).toContain("[1] Seoul");
+    expect(result.text).toContain("https://en.wikipedia.org/wiki/Seoul");
+  });
+
+  it("hangeul still works and returns the formatted mock report", async () => {
+    const fetchMock = stubSearch();
+    const result = await runOrchestratorToText({ messages: [user("hangeul report please")] }, { trusted: true });
+    expect(result).toMatchObject({ agent: "hangeul", provider: "none", sources: [] });
+    expect(result.text).toContain("Hangeul daily operations report (demo data)");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("search agent", () => {
+  it("returns sources up front and grounds the model in the briefing", async () => {
+    stubSearch();
+    const model = mockModel(textParts("Seoul is the capital [1]."));
+    const result = await runOrchestrator({ messages: [user("latest news about Seoul")] }, { trusted: false, model });
+    expect(result.agent).toBe("search");
+    expect(result.provider).toBe("openai");
+    expect(result.sources).toHaveLength(5);
+    expect(await new Response(result.stream).text()).toBe("Seoul is the capital [1].");
+    const system = systemPrompt(model);
+    expect(system).toContain("Live Search Agent");
+    expect(system).toContain("[1] Seoul — Seoul is the capital of South Korea. — https://en.wikipedia.org/wiki/Seoul");
+    expect(model.doStreamCalls[0].tools ?? []).toHaveLength(0);
+  });
+
+  it("falls back to core (without the search tool) when search finds nothing", async () => {
+    stubSearch({ Heading: "", AbstractText: "", AbstractURL: "", Results: [], RelatedTopics: [] });
+    const model = mockModel(textParts("From memory: ..."));
+    const result = await runOrchestratorToText({ messages: [user("latest news about nothing")] }, { trusted: false, model });
+    expect(result.agent).toBe("core");
+    expect(result.sources).toEqual([]);
+    expect(result.text).toBe("From memory: ...");
+    expect(systemPrompt(model)).toContain("Live web search returned nothing");
+    expect(model.doStreamCalls[0].tools ?? []).toHaveLength(0);
+  });
+
+  it("serves the raw results when the model fails before any text", async () => {
+    stubSearch();
+    const model = mockModel([{ type: "error", error: new Error("rate limited") }]);
+    const result = await runOrchestratorToText({ messages: [user("latest news about Seoul")] }, { trusted: false, model });
+    expect(result.agent).toBe("search");
+    expect(result.text).toContain("[1] Seoul");
+  });
+});
+
+describe("core agent", () => {
+  it("streams model text with the last 20 messages and the webSearch tool on OpenAI", async () => {
+    const model = mockModel(textParts("Hello, ", "operator."));
+    const history: ChatMessage[] = Array.from({ length: 30 }, (_, i) =>
+      i % 2 === 0 ? user(`question ${i}`) : { role: "assistant", content: `answer ${i}` },
+    );
+    history.push(user("Write me a haiku"));
+    const result = await runOrchestrator({ messages: history }, { trusted: false, model });
+    expect(result).toMatchObject({ agent: "core", provider: "openai", lang: "en", sources: [] });
+    expect(await new Response(result.stream).text()).toBe("Hello, operator.");
+
+    const call = model.doStreamCalls[0];
+    expect(call.prompt.filter((m) => m.role !== "system")).toHaveLength(20);
+    expect(call.tools?.map((t) => t.name)).toEqual(["webSearch"]);
+    expect(systemPrompt(model)).toContain("General Cognitive Agent");
+  });
+
+  it("skips tools for Ollama", async () => {
+    const model = mockModel(textParts("hi"));
+    const result = await runOrchestrator({ messages: [user("hello")] }, { trusted: false, model, provider: "ollama" });
+    expect(result.provider).toBe("ollama");
+    await new Response(result.stream).text();
+    expect(model.doStreamCalls[0].tools ?? []).toHaveLength(0);
+  });
+
+  it("runs the webSearch tool and appends sources the answer did not cite", async () => {
+    const fetchMock = stubSearch();
+    const model = mockModel(
+      [{ type: "tool-call", toolCallId: "c1", toolName: "webSearch", input: JSON.stringify({ query: "Seoul" }) }, finish("tool-calls")],
+      [...textParts("Seoul is the capital."), finish()],
+    );
+    const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false, model });
+    expect(fetchMock).toHaveBeenCalled();
+    expect(model.doStreamCalls).toHaveLength(2);
+    expect(result.text.startsWith("Seoul is the capital.\n\nSources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul")).toBe(true);
+  });
+
+  it("turns a mid-stream provider error into a graceful closing line", async () => {
+    const model = mockModel([...textParts("Half an ans").slice(0, 2), { type: "error", error: new Error("socket hang up") }]);
+    const result = await runOrchestratorToText({ messages: [user("Explain quantum tunnelling")] }, { trusted: false, model });
+    expect(result.text.startsWith("Half an ans\n\n[Connection to the language model dropped mid-answer.")).toBe(true);
+  });
+
+  it("emits a friendly line when the model fails before any text", async () => {
+    const failing = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new Error("ECONNREFUSED 127.0.0.1:11434");
+      },
+    });
+    const ko = await runOrchestratorToText({ messages: [user("안녕, 자기소개 해줘")] }, { trusted: false, model: failing });
+    expect(ko.text).toBe("지금은 언어 모델에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.");
+
+    const erroring = mockModel([{ type: "error", error: new Error("boom") }]);
+    const en = await runOrchestratorToText({ messages: [user("hello")] }, { trusted: false, model: erroring });
+    expect(en.text).toBe("I couldn't reach my language model just now. Please try again in a moment.");
+  });
+
+  it("closes quietly when the client aborts", async () => {
+    const controller = new AbortController();
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({ chunks: [...textParts("a", "b", "c"), finish()] as StreamPart[], chunkDelayInMs: 30 }),
+      }),
+    });
+    const result = await runOrchestrator({ messages: [user("hello")] }, { trusted: false, model, signal: controller.signal });
+    const reader = result.stream.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe("a");
+    controller.abort();
+    let rest = "";
+    for (let r = await reader.read(); !r.done; r = await reader.read()) rest += new TextDecoder().decode(r.value);
+    expect(rest).not.toContain("Connection");
+  });
+});
+
+describe("vision agent", () => {
+  it("sends the image on the latest user turn only", async () => {
+    const model = mockModel(textParts("A tiny pixel."));
+    const messages: ChatMessage[] = [user("first photo", PNG), { role: "assistant", content: "A cat." }, user("")];
+    const result = await runOrchestratorToText({ messages, image: PNG, lang: "ko" }, { trusted: false, model });
+    expect(result).toMatchObject({ agent: "vision", lang: "ko", text: "A tiny pixel." });
+
+    const prompt = model.doStreamCalls[0].prompt;
+    expect(prompt[1]).toMatchObject({ role: "user", content: [{ type: "text", text: `first photo\n${IMAGE_PLACEHOLDER}` }] });
+    const latest = prompt.at(-1);
+    expect(latest?.role).toBe("user");
+    const parts = latest?.role === "user" ? latest.content : [];
+    expect(parts[0]).toMatchObject({ type: "text", text: "이 이미지를 분석해 주세요." });
+    expect(parts[1]).toMatchObject({ type: "file", mediaType: "image/png" });
+    expect(systemPrompt(model)).toContain("Vision & Localization Agent");
+  });
+});
+
+describe("hangeul agent with a model", () => {
+  it("summarizes the report JSON and falls back to the plain report on failure", async () => {
+    const model = mockModel(textParts("Executive briefing."));
+    const ok = await runOrchestratorToText({ messages: [user("Hangeul report")] }, { trusted: false, model });
+    expect(ok).toMatchObject({ agent: "hangeul", provider: "openai", text: "Executive briefing." });
+    expect(systemPrompt(model)).toContain('"source": "mock"');
+
+    const broken = mockModel([{ type: "error", error: new Error("down") }]);
+    const fallback = await runOrchestratorToText({ messages: [user("한글 포털 상태")] }, { trusted: false, model: broken });
+    expect(fallback.agent).toBe("hangeul");
+    expect(fallback.text).toContain("한글 포털 상태: 온라인 (데모)");
+  });
+});
+
+// ─── Real provider path: @ai-sdk/openai against a local OpenAI-compatible server ───
+
+interface CapturedRequest {
+  url: string;
+  authorization: string | undefined;
+  body: { model: string; tools?: Array<{ function: { name: string } }>; messages: Array<{ role: string }> };
+}
+
+type Script = (res: ServerResponse, call: number) => void;
+
+const sse = (res: ServerResponse, chunks: unknown[], opts: { cut?: boolean } = {}) => {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+  if (opts.cut) {
+    // Drop the connection mid-answer, after the first chunk has reached the client.
+    setTimeout(() => res.destroy(), 50);
+    return;
+  }
+  res.end("data: [DONE]\n\n");
+};
+const delta = (d: Record<string, unknown>, finish: string | null = null) => ({
+  id: "c1",
+  object: "chat.completion.chunk",
+  created: 1,
+  model: "m",
+  choices: [{ index: 0, delta: d, finish_reason: finish }],
+});
+
+describe("real provider over a local OpenAI-compatible server", () => {
+  let server: Server;
+  let baseUrl = "";
+  let script: Script = () => undefined;
+  const captured: CapturedRequest[] = [];
+
+  beforeAll(async () => {
+    server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        captured.push({ url: req.url ?? "", authorization: req.headers.authorization, body: JSON.parse(raw) });
+        script(res, captured.length);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  beforeEach(() => {
+    captured.length = 0;
+  });
+
+  it("streams an Ollama answer through /v1/chat/completions without tools", async () => {
+    vi.stubEnv("LLM_PROVIDER", "ollama");
+    vi.stubEnv("OLLAMA_BASE_URL", `${baseUrl}/`);
+    vi.stubEnv("OLLAMA_MODEL", "llama3.1");
+    script = (res) => sse(res, [delta({ role: "assistant", content: "Hello " }), delta({ content: "operator." }), delta({}, "stop")]);
+
+    const result = await runOrchestratorToText({ messages: [user("Say hello")] }, { trusted: false });
+    expect(result).toMatchObject({ agent: "core", provider: "ollama", text: "Hello operator." });
+    expect(captured[0].url).toBe("/v1/chat/completions");
+    expect(captured[0].body.model).toBe("llama3.1");
+    expect(captured[0].body.tools).toBeUndefined();
+  });
+
+  it("runs the OpenAI tool loop (webSearch) and cites sources", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-local-test");
+    vi.stubEnv("OPENAI_BASE_URL", `${baseUrl}/v1`);
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith("https://api.duckduckgo.com/")) return new Response(JSON.stringify(DDG_INSTANT), { status: 202 });
+      return realFetch(input, init);
+    });
+    script = (res, call) =>
+      call === 1
+        ? sse(res, [
+            delta({
+              role: "assistant",
+              tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "webSearch", arguments: '{"query":"Seoul"}' } }],
+            }),
+            delta({}, "tool_calls"),
+          ])
+        : sse(res, [delta({ role: "assistant", content: "Seoul is the capital [1]." }), delta({}, "stop")]);
+
+    const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false });
+    expect(result.agent).toBe("core");
+    expect(result.provider).toBe("openai");
+    expect(captured).toHaveLength(2);
+    expect(captured[0].authorization).toBe("Bearer sk-local-test");
+    expect(captured[0].body.model).toBe("gpt-4o");
+    expect(captured[0].body.tools?.map((t) => t.function.name)).toEqual(["webSearch"]);
+    expect(captured[1].body.messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool"]);
+    expect(result.text).toContain("Seoul is the capital [1].");
+    expect(result.text).toContain("Sources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul");
+  });
+
+  it("appends a graceful line when the connection drops mid-stream", async () => {
+    vi.stubEnv("LLM_PROVIDER", "ollama");
+    vi.stubEnv("OLLAMA_BASE_URL", baseUrl);
+    script = (res) => sse(res, [delta({ role: "assistant", content: "Partial answ" })], { cut: true });
+    const result = await runOrchestratorToText({ messages: [user("Explain entropy")] }, { trusted: false });
+    expect(result.text.startsWith("Partial answ\n\n[Connection to the language model dropped mid-answer.")).toBe(true);
+  });
+
+  it("answers with a friendly line when the server returns an HTTP error", async () => {
+    vi.stubEnv("LLM_PROVIDER", "ollama");
+    vi.stubEnv("OLLAMA_BASE_URL", baseUrl);
+    script = (res) => {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "model 'llama3.1' not found" } }));
+    };
+    const result = await runOrchestratorToText({ messages: [user("안녕하세요")] }, { trusted: false });
+    expect(result.text).toBe("지금은 언어 모델에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.");
+  });
+});

@@ -6,6 +6,7 @@
 import { getEnv, hangeulLiveConfigured } from "../env";
 import type { HangeulMetric, HangeulReport, HangeulStatus, ResolvedLang } from "../types";
 import { truncate } from "../utils";
+import { withTimeout } from "./search-agent";
 
 const LIVE_TIMEOUT_MS = 10_000;
 const MAX_METRICS = 20;
@@ -169,11 +170,6 @@ function sanitizeReason(error: unknown): string {
   return "network error";
 }
 
-function portalSignal(parent?: AbortSignal | null): AbortSignal {
-  const timeout = AbortSignal.timeout(LIVE_TIMEOUT_MS);
-  return parent && typeof AbortSignal.any === "function" ? AbortSignal.any([parent, timeout]) : timeout;
-}
-
 async function fetchPortal(path: string, signal?: AbortSignal | null): Promise<{ res: Response; latencyMs: number }> {
   const { baseUrl, username, password } = getEnv().hangeul;
   if (!baseUrl || !username || !password) throw new BridgeError("portal not configured");
@@ -195,7 +191,7 @@ async function fetchPortal(path: string, signal?: AbortSignal | null): Promise<{
     // A redirect usually means a login page; do not follow it with credentials attached.
     redirect: "manual",
     cache: "no-store",
-    signal: portalSignal(signal),
+    signal: withTimeout(LIVE_TIMEOUT_MS, signal),
   });
   return { res, latencyMs: Date.now() - started };
 }
