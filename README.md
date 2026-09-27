@@ -1,1 +1,166 @@
-# Jeenie-saem-bot
+# Jeannie · Bilingual Multimodal Personal AI
+
+Jeannie is a J.A.R.V.I.S.-style personal AI with a neon-pink holographic HUD. She speaks English and
+Korean (한국어), sees through your camera, searches the live web, talks back with a neural voice,
+reports on your Hangeul admin portal, and answers every smart-home command with instant composure.
+
+Built with Next.js 15 (App Router, TypeScript), Tailwind CSS, Framer Motion, the Vercel AI SDK, and
+Canvas-based holographic visualizers. Ready for Vercel with zero extra configuration.
+
+## Features
+
+| Agent | What it does |
+| --- | --- |
+| **Orchestrator (Jeannie Core)** | Reads each text, voice, or image prompt and routes it to one specialist. |
+| **IoT Interceptor** | Any smart-home or IoT command or query gets exactly `Yes, it is done.` (`네, 처리되었습니다.` in Korean). No tools, no LLM. |
+| **Live Search Agent** | Time-sensitive or fact-checking questions go to Tavily, then Google Custom Search, then DuckDuckGo. The results are summarized with inline `[n]` citations. |
+| **Vision & Localization Agent** | Image attachments (documents, screenshots, camera frames) get a structured bilingual analysis, with visible text transcribed and translated. |
+| **Hangeul Admin Bridge** | Fetches admin reports and status checks from the Hangeul portal on demand. Uses mock data when live access isn't configured, and sends a daily report to Telegram. |
+| **General Cognitive Agent** | Handles everything else and can call web search on its own. |
+
+Also included:
+
+- **Voice out:** ElevenLabs first, then Microsoft Edge neural voices (`en-US-JennyNeural`, `ko-KR-SunHiNeural`, no API key needed), then the browser's built-in speech. The audio drives the orb and the spectrum visualizer.
+- **Voice in:** push-to-talk speech recognition in English or Korean, using the browser's Web Speech API.
+- **HUD:** a canvas arc-reactor orb, a spectrum analyzer, a translucent chat terminal, tactical telemetry, IoT control tiles, and a camera scanner.
+- **Telegram bridge:** two-way bot. Chat with Jeannie, send photos for analysis, run `/report`, `/search`, and `/status`.
+- **Language modes:** Auto-detect, English, Korean, or bilingual (English then Korean). You can also ask for "both languages" in any message.
+
+## Quick start
+
+```bash
+npm install
+cp .env.example .env.local   # every key is optional; see below
+npm run dev                  # http://localhost:3000
+```
+
+With no keys at all, Jeannie still runs in offline mode. IoT confirmations, live search (DuckDuckGo),
+Edge neural voice, camera, and the mock Hangeul report all work. Add `OPENAI_API_KEY` (or run
+[Ollama](https://ollama.com) and set `LLM_PROVIDER=ollama`) to turn on full reasoning and vision.
+
+| Script | Purpose |
+| --- | --- |
+| `npm run dev` | Start the local dev server |
+| `npm run build` / `npm start` | Build and serve for production |
+| `npm test` | Unit and route tests (Vitest) |
+| `npm run lint` / `npm run typecheck` | ESLint and TypeScript checks |
+
+## Deploy to Vercel
+
+1. **Merge to `main`.** Merge the pull request (or push your branch) so `munim430-ai/Jeenie-saem-bot` has the code.
+2. **Import the project.**
+   - Go to [vercel.com/new](https://vercel.com/new) and select `munim430-ai/Jeenie-saem-bot`.
+   - The framework preset is detected as **Next.js**.
+3. **Set environment variables.**
+   - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
+   - At minimum, set `OPENAI_API_KEY` and `TAVILY_API_KEY`.
+   - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
+4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
+5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
+   - Set `CRON_SECRET` so only Vercel can trigger it.
+   - Set `TELEGRAM_*` so the report reaches your admin chat.
+
+### Telegram webhook
+
+Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET`.
+Then register the webhook once:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d "url=https://<your-app>.vercel.app/api/telegram/webhook" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+```
+
+Send `/whoami` to the bot, put the chat id it returns in `TELEGRAM_ADMIN_CHAT_ID`, and redeploy.
+After that, only that chat gets answers or live Hangeul data.
+
+## Configuration
+
+Every variable is optional. Values left as the `your_…` placeholders from `.env.example` are treated as unset.
+
+| Variable | Purpose |
+| --- | --- |
+| `JEANNIE_ACCESS_KEY` | Shared secret for every `/api` route (header `x-jeannie-key` or `Authorization: Bearer`). The HUD prompts for it once and remembers it in this browser. |
+| `LLM_PROVIDER` | `auto` (default), `openai` or `ollama`. |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `DEFAULT_MODEL`, `VISION_MODEL` | OpenAI, or any OpenAI-compatible endpoint such as Groq or OpenRouter. The default model is `gpt-4o`. |
+| `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
+| `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Premium voice. `eleven_multilingual_v2` speaks Korean. |
+| `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO` | Free Microsoft neural voices, used when ElevenLabs is off or fails. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. |
+| `HANGEUL_BASE_URL`, `HANGEUL_USERNAME`, `HANGEUL_PASSWORD`, `HANGEUL_REPORT_PATH`, `HANGEUL_STATUS_PATH`, `MOCK_MODE` | Hangeul admin portal. See below. |
+| `CRON_SECRET` | Authenticates the Vercel Cron call to `/api/hangeul`. |
+
+> **About the voice:** set `ELEVENLABS_VOICE_ID` to a voice you own or are licensed to use, such as
+> one from the ElevenLabs Voice Library or your own recording. Cloning a real person's voice without
+> their consent breaks ElevenLabs' terms and personality rights, so Jeannie doesn't ship with one.
+
+## How the IoT override works
+
+The interceptor runs first, before search, vision, or any model call, so it responds instantly and deterministically.
+
+- **Responses:** exactly `Yes, it is done.`, or `네, 처리되었습니다.` when you write in Korean or the HUD is set to Korean.
+- **Always triggers:** smart-home phrases such as "turn on/off", "switch off the fan", "smart home", "IoT", "thermostat", "air conditioner", `불 켜`, `불 꺼`, `문 잠궈`, and `스마트홈`.
+- **Triggers with a command word:** device words from the brief (`light`, `lamp`, `fan`, `ac`, `tv`, `door`, `lock`, `switch`, `에어컨`, `온도`, …) count only alongside a command or state word ("dim the lights", "is the door locked?", `에어컨 온도 맞춰줘`).
+- **Doesn't trigger:** questions like "what's the speed of light?" or "I'm a fan of your style" go to the other agents instead.
+- **No real devices:** confirmations are simulated. Jeannie doesn't connect to any device. To control real hardware, call it from `src/lib/agents/iot-interceptor.ts` before returning the confirmation (for example, a Home Assistant webhook).
+
+## Hangeul admin bridge
+
+`/api/hangeul` (and the chat, when you ask for a "Hangeul report") reads two JSON endpoints relative to `HANGEUL_BASE_URL`:
+
+- `HANGEUL_REPORT_PATH` (default `/api/reports/daily`)
+- `HANGEUL_STATUS_PATH` (default `/api/status`)
+
+**Authentication.** Requests use HTTP Basic auth with `HANGEUL_USERNAME` and `HANGEUL_PASSWORD`.
+
+**Response format.** Any JSON works:
+
+- A `metrics: [{label, value}]` array and a `highlights: string[]` array are used as-is.
+- Otherwise, top-level fields are turned into metrics.
+
+**Who gets live data.** Live portal data is only returned to trusted callers:
+
+- a request carrying `JEANNIE_ACCESS_KEY`
+- the Vercel Cron call carrying `CRON_SECRET`
+- the Telegram admin chat
+
+Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_MODE=true` forces mock data.
+
+## API
+
+| Route | Runtime | Description |
+| --- | --- | --- |
+| `POST /api/chat` | Edge | `{ messages, image?, lang? }` → streamed text. Metadata comes back in the `x-jeannie-agent`, `x-jeannie-lang`, `x-jeannie-provider`, and `x-jeannie-sources` headers. |
+| `GET/POST /api/search` | Edge | Live search: `?q=` or `{ query, maxResults? }`. |
+| `POST /api/tts` | Node.js | `{ text, lang? }` → `audio/mpeg`. The engine used is named in `x-jeannie-tts-engine`. Returns 503 when only the browser voice is available. |
+| `GET/POST /api/hangeul` | Node.js | `action=status\|report\|notify`, plus the daily cron. |
+| `POST /api/telegram/webhook` | Node.js | Telegram bot bridge. |
+| `GET /api/status` | Edge | Which capabilities are configured. Never returns secrets. |
+
+## Project layout
+
+```
+src/
+├── app/
+│   ├── api/{chat,search,tts,hangeul,status}/route.ts
+│   ├── api/telegram/webhook/route.ts
+│   ├── layout.tsx · page.tsx · globals.css      # the pink hologram HUD
+├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · CameraScanner
+├── hooks/        chat streaming, voice output, speech recognition
+└── lib/
+    ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent · hangeul-bridge
+    │             tts-engine · edge-tts · llm · persona
+    ├── client/   typed fetch wrappers for the HUD
+    └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
+tests/            Vitest suites for agents and routes
+```
+
+The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `route.ts` file, so it lives at `api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
+
+## Agent skills
+
+`.claude/skills/` contains [Matt Pocock's engineering skills](https://github.com/mattpocock/skills), for example
+`/grill-me`, `/tdd`, `/to-spec`, and `/diagnosing-bugs`, for Claude Code sessions in this repo. Run
+`/setup-matt-pocock-skills` once to configure them. Attribution is in
+[`.claude/skills/THIRD_PARTY_NOTICES.md`](.claude/skills/THIRD_PARTY_NOTICES.md).
