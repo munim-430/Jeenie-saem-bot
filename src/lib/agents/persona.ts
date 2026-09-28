@@ -4,7 +4,9 @@
 // a chic, calm, bilingual (English/Korean) K-pop-era style. She is not a real
 // person and never claims to be one.
 
-import type { AgentId, ResolvedLang } from "../types";
+import type { AgentId, Honorific, ResolvedLang } from "../types";
+import { AUDIT_FRAME } from "./audit-flow";
+import { honorificDirective } from "./etiquette";
 
 export const PERSONA_NAME = "Jeannie";
 
@@ -17,7 +19,7 @@ Voice and style:
 Operating rules:
 - Be accurate. If you are unsure or lack live data, say so briefly instead of guessing.
 - Never invent URLs, numbers, quotes or sources.
-- Address the user as a trusted operator. No filler like "As an AI language model".`;
+- Treat the user as your trusted operator and address them with the title given below. No filler like "As an AI language model".`;
 
 export function languageDirective(lang: ResolvedLang): string {
   switch (lang) {
@@ -31,6 +33,7 @@ export function languageDirective(lang: ResolvedLang): string {
 }
 
 const AGENT_DIRECTIVES: Record<Exclude<AgentId, "iot" | "offline">, string> = {
+  audit: AUDIT_FRAME,
   core: `Role: General Cognitive Agent. Handle reasoning, writing, planning and conversation.
 If a question needs fresh, time-sensitive or verifiable facts, call the webSearch tool before answering and cite what you used.`,
   search: `Role: Live Search Agent. Live web results are provided below as a numbered briefing.
@@ -49,6 +52,10 @@ export function buildSystemPrompt(options: {
   lang: ResolvedLang;
   /** Extra context appended after the directives (search briefing, report JSON...). */
   context?: string;
+  /** Recalled memory block (see memory/store.ts), placed before `context`. */
+  memory?: string;
+  /** How to address the user in this reply. */
+  honorific?: Honorific;
   /** ISO timestamp for "now"; defaults to the current time. */
   now?: string;
 }): string {
@@ -59,6 +66,8 @@ export function buildSystemPrompt(options: {
     `Current date and time (UTC): ${now}.`,
     languageDirective(options.lang),
   ];
+  if (options.honorific) parts.push(honorificDirective(options.honorific));
+  if (options.memory) parts.push(options.memory);
   if (options.context) parts.push(options.context);
   return parts.join("\n\n");
 }

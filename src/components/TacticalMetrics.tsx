@@ -84,7 +84,11 @@ function SystemStatusPanel({
           ko="코어"
           value={llmOnline ? `${status.llm.provider.toUpperCase()} · ${status.llm.model ?? "default"}` : "OFFLINE MODE"}
           title={
-            llmOnline ? `Vision model: ${status.llm.visionModel ?? status.llm.model ?? "default"}` : "No LLM configured"
+            llmOnline
+              ? status.llm.visionProvider !== "none"
+                ? `Vision: ${status.llm.visionProvider} · ${status.llm.visionModel ?? "default"}`
+                : "Vision: off (DeepSeek can't read images; set ANTHROPIC_API_KEY or OPENAI_API_KEY)"
+              : "No LLM configured"
           }
           led={llmOnline ? "on" : "warn"}
         />
@@ -99,6 +103,12 @@ function SystemStatusPanel({
           ko="음성"
           value={status.voice.engines.map((e) => VOICE_ROW_LABEL[e]).join(" · ")}
           led={serverVoice ? "on" : "idle"}
+        />
+        <StatusRow
+          label="MEMORY"
+          ko="기억"
+          value={status.memory.configured ? "SUPABASE" : "NOT LINKED"}
+          led={status.memory.configured ? "on" : "off"}
         />
         <StatusRow
           label="TELEGRAM"
@@ -301,6 +311,8 @@ interface TacticalMetricsProps {
   replyLang: ResolvedLang | null;
   sessionStart: number | null;
   className?: string;
+  /** Extra panels at the bottom of the column (the memory panel). */
+  children?: ReactNode;
 }
 
 /** Left HUD column: capabilities, smart-home tiles, telemetry and the Hangeul bridge. */
@@ -318,6 +330,7 @@ export function TacticalMetrics({
   replyLang,
   sessionStart,
   className,
+  children,
 }: TacticalMetricsProps) {
   return (
     <div className={cn("flex flex-col gap-2.5", className)}>
@@ -345,6 +358,7 @@ export function TacticalMetrics({
         locked={Boolean(status?.accessKeyRequired) && !hasAccessKey}
         onReport={() => onCommand("Hangeul daily report")}
       />
+      {children}
     </div>
   );
 }

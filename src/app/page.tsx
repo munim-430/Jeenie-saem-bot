@@ -7,6 +7,7 @@ import { CameraScanner } from "@/components/CameraScanner";
 import { ChatTerminal, type Attachment } from "@/components/ChatTerminal";
 import type { OrbState } from "@/components/HologramOrb";
 import { HudHeader } from "@/components/HudHeader";
+import { MemoryPanel } from "@/components/MemoryPanel";
 import { isLangMode } from "@/components/LanguageToggle";
 import { ReactorCore } from "@/components/ReactorCore";
 import { TacticalMetrics } from "@/components/TacticalMetrics";
@@ -15,7 +16,7 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
-import { readAccessKey, writeAccessKey } from "@/lib/client/api";
+import { fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
 import type { LangMode } from "@/lib/types";
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
@@ -62,6 +63,26 @@ export default function JeannieHud() {
     },
     onAccessKeyRequired: (rejected) => setKeyDialog({ open: true, reason: rejected ? "rejected" : "required" }),
   });
+
+  // Opening line: a Korean greeting for the operator's time of day. Once per page load,
+  // after the status says whether a key is needed (a 401 here would be noise).
+  const greetedRef = useRef(false);
+  const statusLoaded = system.status !== null;
+  const keyNeeded = Boolean(system.status?.accessKeyRequired);
+  const { greet } = chat;
+  const { speak } = speech;
+  useEffect(() => {
+    if (greetedRef.current || !statusLoaded || (keyNeeded && !hasAccessKey)) return;
+    greetedRef.current = true;
+    // Not aborted on cleanup: the ref already stops a second request, and the
+    // greeting is skipped anyway once the operator has started chatting.
+    fetchSessionGreeting()
+      .then(({ greeting }) => {
+        // Browsers may block audio before the first click; the text still shows.
+        if (greet(greeting) && voiceOnRef.current && !listeningRef.current) speak(greeting, "ko");
+      })
+      .catch(() => undefined);
+  }, [statusLoaded, keyNeeded, hasAccessKey, greet, speak]);
 
   const recognitionLang: RecognitionLang =
     lang === "ko" ? "ko-KR" : lang === "en" ? "en-US" : prefersKorean ? "ko-KR" : "en-US";
@@ -201,7 +222,15 @@ export default function JeannieHud() {
             voiceEngine={speech.engine}
             replyLang={replyLang}
             sessionStart={sessionStart}
-          />
+          >
+            <MemoryPanel
+              configured={Boolean(system.status?.memory?.configured)}
+              accessKeyRequired={keyNeeded}
+              hasAccessKey={hasAccessKey}
+              statusReady={statusLoaded}
+              onNotice={chat.notify}
+            />
+          </TacticalMetrics>
         </main>
       </div>
 

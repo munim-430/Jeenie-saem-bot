@@ -18,8 +18,10 @@ export function GET(): Response {
     llm: {
       provider: env.llm.provider,
       model: online ? env.llm.model : null,
-      visionModel: online ? env.llm.visionModel : null,
+      visionProvider: env.llm.visionProvider,
+      visionModel: env.llm.visionProvider !== "none" ? env.llm.visionModel : null,
     },
+    memory: { configured: env.memory.enabled },
     search: { providers: configuredSearchProviders(env) },
     voice: { engines: configuredTtsEngines(env) },
     telegram: { configured: Boolean(env.telegram.botToken) },
