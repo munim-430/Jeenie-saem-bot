@@ -131,7 +131,7 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
 | `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Jeannie's main voice. `eleven_multilingual_v2` speaks Korean; `eleven_flash_v2_5` is faster. With only the key set, the premade voice "Rachel" is used; free plans must set the ID of a voice they created, since library voices return HTTP 402 there (Jeannie then falls back to the Edge voice). |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Memory. Server-only; see [Memory](#memory-supabase). |
+| `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | Memory. The key is server-only; the publishable/anon key can't read memory. See [Memory](#memory-supabase). |
 | `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. The webhook secret is required, and only the admin chat gets answers. |
 | `HANGEUL_BASE_URL`, `HANGEUL_USERNAME`, `HANGEUL_PASSWORD`, `HANGEUL_REPORT_PATH`, `HANGEUL_STATUS_PATH`, `MOCK_MODE` | Hangeul admin portal. See below. |

@@ -102,8 +102,11 @@ export function getEnv() {
   };
   const visionProvider = visionProviderFor(llmProvider, { anthropic: anthropicKey, openai: openaiKey });
 
-  const supabaseUrl = read("SUPABASE_URL");
-  const supabaseServiceKey = read("SUPABASE_SERVICE_ROLE_KEY");
+  // The project URL is public, so the Next.js-style NEXT_PUBLIC_ name works too. The key
+  // must be the server-only secret (sb_secret_… or legacy service_role): the memory
+  // tables refuse the publishable/anon key by design.
+  const supabaseUrl = read("SUPABASE_URL") ?? read("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseServiceKey = read("SUPABASE_SERVICE_ROLE_KEY") ?? read("SUPABASE_SECRET_KEY");
 
   return {
     appName: read("NEXT_PUBLIC_APP_NAME") ?? "Jeannie AI",
