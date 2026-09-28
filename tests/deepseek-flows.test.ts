@@ -57,6 +57,8 @@ const ENV = [
   "GOOGLE_CSE_ID",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "SUPABASE_SECRET_KEY",
   "JEANNIE_ACCESS_KEY",
   "JEANNIE_TIMEZONE",
   "ELEVENLABS_API_KEY",
@@ -419,5 +421,23 @@ describe("/api/memory", () => {
     const res = await memoryGet(memoryRequest("GET"));
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ code: "memory_not_migrated" });
+  });
+});
+
+describe("Supabase variable names", () => {
+  it("accepts NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY, preferring the server names", () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://pub.supabase.co/");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_alias");
+    expect(getEnv().memory).toEqual({ supabaseUrl: "https://pub.supabase.co", serviceKey: "sb_secret_alias", enabled: true });
+
+    vi.stubEnv("SUPABASE_URL", "https://server.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_main");
+    expect(getEnv().memory).toMatchObject({ supabaseUrl: "https://server.supabase.co", serviceKey: "sb_secret_main" });
+  });
+
+  it("stays off with only the publishable key", () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://pub.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_x");
+    expect(getEnv().memory.enabled).toBe(false);
   });
 });
