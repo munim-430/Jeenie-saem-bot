@@ -35,8 +35,8 @@ npm run dev                  # http://localhost:3000
 ```
 
 With no keys at all, Jeannie still runs in offline mode. IoT confirmations, live search (DuckDuckGo),
-Edge neural voice, camera, and the mock Hangeul report all work. Add `OPENAI_API_KEY` (or run
-[Ollama](https://ollama.com) and set `LLM_PROVIDER=ollama`) to turn on full reasoning and vision.
+Edge neural voice, camera, and the mock Hangeul report all work. Add `ANTHROPIC_API_KEY` (Claude) or
+`OPENAI_API_KEY`, or run [Ollama](https://ollama.com) and set `LLM_PROVIDER=ollama`, to turn on full reasoning and vision.
 
 | Script | Purpose |
 | --- | --- |
@@ -53,7 +53,7 @@ Edge neural voice, camera, and the mock Hangeul report all work. Add `OPENAI_API
    - The framework preset is detected as **Next.js**.
 3. **Set environment variables.**
    - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
-   - At minimum, set `OPENAI_API_KEY` and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
+   - At minimum, set a language model key (`ANTHROPIC_API_KEY` for Claude, or `OPENAI_API_KEY`) and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
    - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
 4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
 5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
@@ -82,7 +82,8 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | Variable | Purpose |
 | --- | --- |
 | `JEANNIE_ACCESS_KEY` | Shared secret for every `/api` route (header `x-jeannie-key` or `Authorization: Bearer`). The HUD prompts for it once and remembers it in this browser. |
-| `LLM_PROVIDER` | `auto` (default), `openai` or `ollama`. |
+| `LLM_PROVIDER` | `auto` (default: Claude if its key is set, then OpenAI, then Ollama), `anthropic`, `openai` or `ollama`. |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_VISION_MODEL` | Claude. The default model is `claude-opus-5`; `claude-sonnet-5` and `claude-haiku-4-5` are cheaper. If Claude's safety classifiers decline a request, it is retried on a fallback model automatically. |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `DEFAULT_MODEL`, `VISION_MODEL` | OpenAI, or any OpenAI-compatible endpoint such as Groq or OpenRouter. The default model is `gpt-4o`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
 | `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
