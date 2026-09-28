@@ -295,6 +295,7 @@ function llmStream(options: {
       prepareStep: options.tools
         ? ({ stepNumber }) => (stepNumber >= MAX_TOOL_STEPS - 1 ? { toolChoice: "none" } : undefined)
         : undefined,
+      providerOptions: options.resolved.providerOptions,
       abortSignal: options.signal ?? undefined,
       maxRetries: 1,
       timeout: { firstChunkMs: 45_000, chunkMs: 30_000 },
@@ -323,7 +324,7 @@ export interface OrchestratorContext {
   /** Test override for the language model (used for every LLM agent). */
   model?: LanguageModel;
   /** Provider label for `model`; defaults to the configured provider, else "openai". */
-  provider?: "openai" | "ollama";
+  provider?: Exclude<LlmProvider, "none">;
 }
 
 export interface OrchestratorResult {
@@ -412,11 +413,15 @@ async function searchQueryFor(turn: Turn, resolved: ResolvedModel | null, signal
     .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${truncate(m.content.replace(/\s+/g, " ").trim(), 400)}`)
     .join("\n");
   try {
+    const claude = resolved.provider === "anthropic";
     const { text } = await generateText({
       model: resolved.model,
       system: QUERY_REWRITE_SYSTEM,
       prompt: `${transcript}\n\nStandalone search query:`,
-      maxOutputTokens: 60,
+      // Claude thinks adaptively and thinking counts toward the cap, so give it
+      // room and ask for the lightest effort on this one-line task.
+      maxOutputTokens: claude ? 1_024 : 60,
+      providerOptions: claude ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } } : undefined,
       maxRetries: 0,
       abortSignal: withTimeout(QUERY_REWRITE_TIMEOUT_MS, signal),
     });
@@ -470,8 +475,8 @@ function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Orchestr
     return fixed("offline", turn.lang, text);
   }
 
-  // Tool calling is reliable on OpenAI; many Ollama models ignore or garble tools.
-  const useTools = resolved.provider === "openai" && !options.searchFailed;
+  // Tool calling is reliable on Claude and OpenAI; many Ollama models ignore or garble tools.
+  const useTools = resolved.provider !== "ollama" && !options.searchFailed;
   const found: SourceLink[] = [];
   let context: string | undefined;
   if (options.searchFailed) {

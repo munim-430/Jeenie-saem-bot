@@ -1,16 +1,23 @@
-// Language model resolution. OpenAI and Ollama both go through the OpenAI
-// provider's Chat Completions client (Ollama exposes an OpenAI-compatible
-// `/v1` API), so one code path serves both. Runs on Edge and Node.js.
+// Language model resolution. Claude goes through the AI SDK's Anthropic
+// provider; OpenAI and Ollama both go through the OpenAI provider's Chat
+// Completions client (Ollama exposes an OpenAI-compatible `/v1` API).
+// Runs on Edge and Node.js.
 
+import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { LanguageModel } from "ai";
+import type { LanguageModel, streamText } from "ai";
 import { getEnv } from "../env";
+import type { LlmProvider } from "../types";
 
 export interface ResolvedModel {
   model: LanguageModel;
-  provider: "openai" | "ollama";
+  provider: Exclude<LlmProvider, "none">;
   modelId: string;
+  /** Per-provider request options, passed through to streamText / generateText. */
+  providerOptions?: ModelProviderOptions;
 }
+
+export type ModelProviderOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
 
 /** `http://host:11434/`, `http://host:11434/v1` → `http://host:11434/v1`. */
 export function ollamaApiBase(baseUrl: string): string {
@@ -24,6 +31,18 @@ export function ollamaApiBase(baseUrl: string): string {
 export function getLanguageModel(kind: "text" | "vision"): ResolvedModel | null {
   const { llm } = getEnv();
   const modelId = kind === "vision" ? llm.visionModel : llm.model;
+
+  if (llm.provider === "anthropic" && llm.anthropicApiKey) {
+    const anthropic = createAnthropic({ apiKey: llm.anthropicApiKey });
+    return {
+      model: anthropic(modelId),
+      provider: "anthropic",
+      modelId,
+      // When a safety classifier declines a request, the API re-runs it on a
+      // fallback model inside the same call instead of returning an empty turn.
+      providerOptions: { anthropic: { fallbacks: "default" } satisfies AnthropicLanguageModelOptions },
+    };
+  }
 
   if (llm.provider === "openai" && llm.openaiApiKey) {
     // Always pass a base URL: left undefined, the SDK reads OPENAI_BASE_URL raw, and the
