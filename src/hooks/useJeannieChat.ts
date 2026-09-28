@@ -18,6 +18,8 @@ export interface HudMessage {
   provider?: LlmProvider | null;
   sources?: SourceLink[];
   latencyMs?: number;
+  /** Shown in the HUD only, never sent back to the model (the opening greeting). */
+  local?: boolean;
 }
 
 /** idle → waiting (request sent, no bytes yet) → streaming (text arriving) → idle. */
@@ -109,7 +111,7 @@ export function useJeannieChat(options: ChatOptions) {
     const end = all.findIndex((m) => m.id === userId);
     const upTo = end === -1 ? all : all.slice(0, end + 1);
     const conversational = upTo.filter(
-      (m) => m.role !== "system" && m.status !== "error" && m.content.trim().length > 0,
+      (m) => m.role !== "system" && !m.local && m.status !== "error" && m.content.trim().length > 0,
     );
     return conversational.slice(-HISTORY_LIMIT).map((m, index, list): ChatMessage => {
       const isNewest = index === list.length - 1;
@@ -246,9 +248,21 @@ export function useJeannieChat(options: ChatOptions) {
     commit(() => []);
   }, [commit]);
 
+  /** Jeannie's opening line, shown once at the top of an empty session. Returns false when the chat already started. */
+  const greet = useCallback(
+    (content: string): boolean => {
+      if (messagesRef.current.length > 0) return false;
+      commit(() => [
+        { id: nextId("greet"), role: "assistant", content, createdAt: Date.now(), status: "done", lang: "ko", local: true },
+      ]);
+      return true;
+    },
+    [commit],
+  );
+
   useEffect(() => () => controllerRef.current?.abort(), []);
 
-  return { messages, phase, telemetry, send, stop, retryPending, dropPending, clear, notify: addSystemLine };
+  return { messages, phase, telemetry, send, stop, retryPending, dropPending, clear, greet, notify: addSystemLine };
 }
 
 export type JeannieChat = ReturnType<typeof useJeannieChat>;

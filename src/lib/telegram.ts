@@ -3,12 +3,15 @@
 // Telegram's markup parser. The bot token lives in request URLs, so errors are
 // logged by method name and status only.
 
+import { APPROVAL_MARKER, isApprovalReply } from "./agents/audit-flow";
+import { sessionGreeting } from "./agents/etiquette";
 import { formatHangeulReport, getHangeulReport, hangeulHudMode } from "./agents/hangeul-bridge";
 import { checkIoTQuery } from "./agents/iot-interceptor";
 import { runOrchestratorToText } from "./agents/orchestrator";
 import { formatSearchBriefing, webSearch, withTimeout } from "./agents/search-agent";
 import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured, type JeannieEnv } from "./env";
-import type { LangMode, SourceLink } from "./types";
+import { getPendingAudit, logAuditDecision, savePendingAudit } from "./memory/store";
+import type { ChatMessage, LangMode, SourceLink } from "./types";
 import { truncate } from "./utils";
 
 const TELEGRAM_API = "https://api.telegram.org";
@@ -253,12 +256,14 @@ function hangeulStatusLine(env: JeannieEnv, isAdmin: boolean): string {
 
 function statusText(isAdmin: boolean): string {
   const env = getEnv();
-  const llm = env.llm.provider === "none" ? "offline (no model configured)" : `${env.llm.provider} (${env.llm.model}; vision ${env.llm.visionModel})`;
+  const vision = env.llm.visionProvider === "none" ? "vision off" : `vision ${env.llm.visionProvider} ${env.llm.visionModel}`;
+  const llm = env.llm.provider === "none" ? "offline (no model configured)" : `${env.llm.provider} (${env.llm.model}; ${vision})`;
   const lines = [
     `${env.appName} status`,
     `• Language model: ${llm}`,
     `• Live search: ${configuredSearchProviders(env).join(" → ")}`,
     `• Voice: ${configuredTtsEngines(env).join(", ")}`,
+    `• Memory: ${env.memory.enabled ? "Supabase connected" : "not configured"}`,
     `• Hangeul portal: ${hangeulStatusLine(env, isAdmin)}`,
     `• Admin chat: ${env.telegram.adminChatId ? (isAdmin ? "this chat" : "configured") : "not set (use /whoami)"}`,
     `• Access key: ${env.accessKey ? "required" : "not required"}`,
@@ -311,10 +316,25 @@ async function answerWithOrchestrator(
   deadline: AbortSignal,
 ): Promise<void> {
   void sendChatAction(chatId);
+  // Telegram sends one message at a time, so an audit awaiting approval is kept
+  // in Supabase and replayed as the previous turn when the reply is "승인" / "cancel".
+  const chatKey = `telegram:${chatId}`;
+  const pending = !image && isApprovalReply(content) ? await getPendingAudit(chatKey) : null;
+  const messages: ChatMessage[] = pending
+    ? [{ role: "assistant", content: pending }, { role: "user", content }]
+    : [{ role: "user", content }];
   const result = await runOrchestratorToText(
-    { messages: [{ role: "user", content }], image, lang },
-    { trusted, signal: deadline },
+    { messages, image, lang },
+    {
+      trusted,
+      signal: deadline,
+      onAuditDecision: (decision, items) => void logAuditDecision(chatKey, decision, items),
+    },
   );
+  if (!deadline.aborted) {
+    // Any other reply ends the wait, like the HUD, where approval must follow the audit directly.
+    await savePendingAudit(chatKey, result.agent === "audit" && result.text.includes(APPROVAL_MARKER) ? result.text : null);
+  }
   if (deadline.aborted) {
     // On abort the orchestrator returns whatever streamed so far, possibly nothing.
     const partial = result.text.trim();
@@ -355,7 +375,7 @@ async function handleMessage(message: TelegramMessage, deadline: AbortSignal): P
   if (command) {
     switch (command.name) {
       case "start":
-        await sendMessage(chatId, TEXT.start);
+        await sendMessage(chatId, `${sessionGreeting({ timeZone: getEnv().timeZone }).greeting}\n\n${TEXT.start}`);
         return;
       case "help":
         await sendMessage(chatId, TEXT.help);

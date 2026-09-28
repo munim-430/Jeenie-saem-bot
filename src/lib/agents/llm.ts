@@ -1,9 +1,12 @@
-// Language model resolution. Claude goes through the AI SDK's Anthropic
-// provider; OpenAI and Ollama both go through the OpenAI provider's Chat
-// Completions client (Ollama exposes an OpenAI-compatible `/v1` API).
+// Language model resolution. DeepSeek (Jeannie's default brain) goes through
+// the AI SDK's DeepSeek provider and Claude through the Anthropic provider;
+// OpenAI and Ollama both go through the OpenAI provider's Chat Completions
+// client (Ollama exposes an OpenAI-compatible `/v1` API). DeepSeek has no image
+// input, so vision resolves through its own provider (see env.ts).
 // Runs on Edge and Node.js.
 
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
+import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel, streamText } from "ai";
 import { getEnv } from "../env";
@@ -30,9 +33,16 @@ export function ollamaApiBase(baseUrl: string): string {
 /** The configured model for plain text or image analysis, or null when no LLM is configured. */
 export function getLanguageModel(kind: "text" | "vision"): ResolvedModel | null {
   const { llm } = getEnv();
+  const provider = kind === "vision" ? llm.visionProvider : llm.provider;
   const modelId = kind === "vision" ? llm.visionModel : llm.model;
 
-  if (llm.provider === "anthropic" && llm.anthropicApiKey) {
+  if (provider === "deepseek" && llm.deepseekApiKey && kind === "text") {
+    // Always pass a base URL, for the same reason as OpenAI below (DEEPSEEK_BASE_URL may be blank).
+    const deepseek = createDeepSeek({ apiKey: llm.deepseekApiKey, baseURL: llm.deepseekBaseUrl ?? "https://api.deepseek.com" });
+    return { model: deepseek(modelId), provider: "deepseek", modelId };
+  }
+
+  if (provider === "anthropic" && llm.anthropicApiKey) {
     const anthropic = createAnthropic({ apiKey: llm.anthropicApiKey });
     return {
       model: anthropic(modelId),
@@ -44,18 +54,24 @@ export function getLanguageModel(kind: "text" | "vision"): ResolvedModel | null 
     };
   }
 
-  if (llm.provider === "openai" && llm.openaiApiKey) {
+  if (provider === "openai" && llm.openaiApiKey) {
     // Always pass a base URL: left undefined, the SDK reads OPENAI_BASE_URL raw, and the
     // blank value shipped in .env.example would then break every request.
     const openai = createOpenAI({ apiKey: llm.openaiApiKey, baseURL: llm.openaiBaseUrl ?? "https://api.openai.com/v1" });
     return { model: openai.chat(modelId), provider: "openai", modelId };
   }
 
-  if (llm.provider === "ollama") {
+  if (provider === "ollama") {
     // Ollama ignores the key, but the OpenAI client refuses to run without one.
     const ollama = createOpenAI({ baseURL: ollamaApiBase(llm.ollamaBaseUrl), apiKey: "ollama", name: "ollama" });
     return { model: ollama.chat(modelId), provider: "ollama", modelId };
   }
 
   return null;
+}
+
+/** DeepSeek's reasoning model has no tool calling. */
+export function supportsTools(resolved: Pick<ResolvedModel, "provider" | "modelId">): boolean {
+  if (resolved.provider === "ollama") return false; // many Ollama models ignore or garble tools
+  return !(resolved.provider === "deepseek" && /reasoner/i.test(resolved.modelId));
 }

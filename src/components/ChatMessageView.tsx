@@ -4,6 +4,7 @@ import { memo } from "react";
 import { motion } from "framer-motion";
 import {
   BrainCircuit,
+  ClipboardCheck,
   ExternalLink,
   Eye,
   FileText,
@@ -28,6 +29,12 @@ export const AGENT_META: Record<AgentId, { label: string; ko: string; icon: Luci
     ko: "한글 브리지",
     icon: FileText,
     tone: "border-neon-deep/70 bg-neon-deep/15 text-petal-soft",
+  },
+  audit: {
+    label: "AUDIT",
+    ko: "실수 점검",
+    icon: ClipboardCheck,
+    tone: "border-neon-hot/70 bg-neon-hot/10 text-petal-soft",
   },
   core: { label: "CORE", ko: "코어", icon: BrainCircuit, tone: "border-neon/60 bg-neon/10 text-neon-hot" },
   offline: {

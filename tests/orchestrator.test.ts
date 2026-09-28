@@ -65,7 +65,18 @@ function stubSearch(instant: unknown = DDG_INSTANT) {
 
 beforeEach(() => {
   resetSearchState();
-  for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
+  for (const name of [
+    "DEEPSEEK_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OLLAMA_BASE_URL",
+    "LLM_PROVIDER",
+    "TAVILY_API_KEY",
+    "GOOGLE_CSE_API_KEY",
+    "GOOGLE_CSE_ID",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ]) {
     vi.stubEnv(name, "");
   }
   for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE"]) vi.stubEnv(name, "");
@@ -177,8 +188,15 @@ describe("IoT interceptor path", () => {
     vi.stubGlobal("fetch", fetchMock);
     const model = mockModel(textParts("should not be used"));
 
-    const result = await runOrchestratorToText({ messages: [user(text)], lang }, { trusted: true, model });
-    expect(result).toEqual({ agent: "iot", lang: expected === "Yes, it is done." ? "en" : "ko", provider: "none", sources: [], text: expected });
+    const result = await runOrchestratorToText({ messages: [user(text)], lang }, { trusted: true, model, honorific: "sir" });
+    expect(result).toEqual({
+      agent: "iot",
+      lang: expected === "Yes, it is done." ? "en" : "ko",
+      provider: "none",
+      honorific: "sir",
+      sources: [],
+      text: expected,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(model.doStreamCalls).toHaveLength(0);
   });

@@ -13,10 +13,11 @@ export type AgentId =
   | "search" // Live Search Agent
   | "vision" // Multimodal Vision & Korean/English Localization Agent
   | "hangeul" // Hangeul Admin & Reporting Bridge
+  | "audit" // Mistake audit: framed recommendations, then approval → execution confirmation
   | "core" // General Cognitive Agent (LLM, may still call the search tool)
   | "offline"; // No LLM configured/reachable: canned or search-only answers
 
-export type LlmProvider = "anthropic" | "openai" | "ollama" | "none";
+export type LlmProvider = "deepseek" | "anthropic" | "openai" | "ollama" | "none";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -44,7 +45,12 @@ export const CHAT_HEADERS = {
   lang: "x-jeannie-lang",
   provider: "x-jeannie-provider",
   sources: "x-jeannie-sources",
+  /** How Jeannie addressed the user in this reply (URI-encoded: 부장님 / 사장님 / sir). */
+  honorific: "x-jeannie-honorific",
 } as const;
+
+/** How Jeannie addresses the user. */
+export type Honorific = "부장님" | "사장님" | "sir";
 
 /** Header carrying the access key from the HUD (alternatively `Authorization: Bearer`). */
 export const ACCESS_KEY_HEADER = "x-jeannie-key";
@@ -120,10 +126,38 @@ export interface SystemStatus {
   app: string;
   voiceName: string;
   accessKeyRequired: boolean;
-  llm: { provider: LlmProvider; model: string | null; visionModel: string | null };
+  llm: {
+    provider: LlmProvider;
+    model: string | null;
+    /** Image analysis can use a different provider than text (DeepSeek has no vision). */
+    visionProvider: LlmProvider;
+    visionModel: string | null;
+  };
+  memory: { configured: boolean };
   search: { providers: SearchProvider[] };
   voice: { engines: TtsEngine[] };
   telegram: { configured: boolean };
   hangeul: { mode: "live" | "mock" };
   time: string;
+}
+
+/** GET /api/session response: Jeannie's opening line for a new session. */
+export interface SessionGreeting {
+  greeting: string;
+  honorific: Honorific;
+  /** Local wall-clock time used for the greeting, e.g. "08:15". */
+  localTime: string;
+  timeZone: string;
+}
+
+/** A document stored in Jeannie's Supabase memory. */
+export interface MemoryDocument {
+  id: string;
+  title: string;
+  source_name: string;
+  kind: "markdown" | "jsonl";
+  pinned: boolean;
+  bytes: number;
+  chunks: number;
+  updated_at: string;
 }
