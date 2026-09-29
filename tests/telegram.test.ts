@@ -119,7 +119,7 @@ beforeEach(() => {
   vi.stubEnv("TELEGRAM_BOT_TOKEN", TOKEN);
   vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", String(ADMIN));
   vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "");
-  for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
+  for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
     vi.stubEnv(name, "");
   }
   for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE", "JEANNIE_ACCESS_KEY"]) vi.stubEnv(name, "");

@@ -28,6 +28,8 @@ const SECRETS: Record<string, string> = {
 
 const ENV_NAMES = [
   ...Object.keys(SECRETS),
+  "DEEPSEEK_API_KEY",
+  "ANTHROPIC_API_KEY",
   "LLM_PROVIDER",
   "OLLAMA_BASE_URL",
   "OPENAI_BASE_URL",

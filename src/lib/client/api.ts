@@ -185,7 +185,7 @@ export interface ChatStreamMeta {
 
 const AGENTS: readonly AgentId[] = ["iot", "search", "vision", "hangeul", "core", "offline"];
 const LANGS: readonly ResolvedLang[] = ["en", "ko", "bilingual"];
-const PROVIDERS: readonly LlmProvider[] = ["anthropic", "openai", "ollama", "none"];
+const PROVIDERS: readonly LlmProvider[] = ["deepseek", "anthropic", "openai", "ollama", "none"];
 
 function pick<T extends string>(value: string | null, allowed: readonly T[]): T | null {
   const normalized = value?.trim().toLowerCase();

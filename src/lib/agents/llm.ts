@@ -1,9 +1,10 @@
-// Language model resolution. Claude goes through the AI SDK's Anthropic
-// provider; OpenAI and Ollama both go through the OpenAI provider's Chat
+// Language model resolution. DeepSeek and Claude go through their AI SDK
+// providers; OpenAI and Ollama both go through the OpenAI provider's Chat
 // Completions client (Ollama exposes an OpenAI-compatible `/v1` API).
 // Runs on Edge and Node.js.
 
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
+import { createDeepSeek, type DeepSeekLanguageModelOptions } from "@ai-sdk/deepseek";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel, streamText } from "ai";
 import { getEnv } from "../env";
@@ -31,6 +32,18 @@ export function ollamaApiBase(baseUrl: string): string {
 export function getLanguageModel(kind: "text" | "vision"): ResolvedModel | null {
   const { llm } = getEnv();
   const modelId = kind === "vision" ? llm.visionModel : llm.model;
+
+  if (llm.provider === "deepseek" && llm.deepseekApiKey) {
+    const deepseek = createDeepSeek({ apiKey: llm.deepseekApiKey });
+    return {
+      model: deepseek(modelId),
+      provider: "deepseek",
+      modelId,
+      // V4 models think before answering by default. Jeannie speaks her replies,
+      // and her Hangeul numbers come from code, so answer straight away.
+      providerOptions: { deepseek: { thinking: { type: "disabled" } } satisfies DeepSeekLanguageModelOptions },
+    };
+  }
 
   if (llm.provider === "anthropic" && llm.anthropicApiKey) {
     const anthropic = createAnthropic({ apiKey: llm.anthropicApiKey });

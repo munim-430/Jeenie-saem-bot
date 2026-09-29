@@ -32,17 +32,29 @@ function reachableOllamaUrl(): string | undefined {
 }
 
 export function getEnv() {
+  const deepseekKey = read("DEEPSEEK_API_KEY");
   const anthropicKey = read("ANTHROPIC_API_KEY");
   const openaiKey = read("OPENAI_API_KEY");
   const requestedProvider = (read("LLM_PROVIDER") ?? "auto").toLowerCase();
   const ollamaBaseUrl = reachableOllamaUrl();
 
   let llmProvider: LlmProvider = "none";
-  if (requestedProvider === "anthropic") llmProvider = anthropicKey ? "anthropic" : "none";
+  if (requestedProvider === "deepseek") llmProvider = deepseekKey ? "deepseek" : "none";
+  else if (requestedProvider === "anthropic") llmProvider = anthropicKey ? "anthropic" : "none";
   else if (requestedProvider === "openai") llmProvider = openaiKey ? "openai" : "none";
   else if (requestedProvider === "ollama") llmProvider = ollamaBaseUrl ? "ollama" : "none";
-  else llmProvider = anthropicKey ? "anthropic" : openaiKey ? "openai" : ollamaBaseUrl ? "ollama" : "none";
+  else
+    llmProvider = deepseekKey
+      ? "deepseek"
+      : anthropicKey
+        ? "anthropic"
+        : openaiKey
+          ? "openai"
+          : ollamaBaseUrl
+            ? "ollama"
+            : "none";
 
+  const deepseekModel = read("DEEPSEEK_MODEL") ?? "deepseek-v4-flash";
   const anthropicModel = read("ANTHROPIC_MODEL") ?? "claude-opus-5";
   const defaultModel = read("DEFAULT_MODEL") ?? "gpt-4o";
   const ollamaModel = read("OLLAMA_MODEL") ?? "llama3.1";
@@ -55,17 +67,27 @@ export function getEnv() {
 
     llm: {
       provider: llmProvider,
+      deepseekApiKey: deepseekKey,
       anthropicApiKey: anthropicKey,
       openaiApiKey: openaiKey,
       openaiBaseUrl: read("OPENAI_BASE_URL"),
       ollamaBaseUrl: ollamaBaseUrl ?? "http://localhost:11434",
-      model: llmProvider === "anthropic" ? anthropicModel : llmProvider === "ollama" ? ollamaModel : defaultModel,
+      model:
+        llmProvider === "deepseek"
+          ? deepseekModel
+          : llmProvider === "anthropic"
+            ? anthropicModel
+            : llmProvider === "ollama"
+              ? ollamaModel
+              : defaultModel,
       visionModel:
-        llmProvider === "anthropic"
-          ? (read("ANTHROPIC_VISION_MODEL") ?? anthropicModel)
-          : llmProvider === "ollama"
-            ? (read("OLLAMA_VISION_MODEL") ?? "llava")
-            : (read("VISION_MODEL") ?? defaultModel),
+        llmProvider === "deepseek"
+          ? (read("DEEPSEEK_VISION_MODEL") ?? "deepseek-v4-flash-vision-exp")
+          : llmProvider === "anthropic"
+            ? (read("ANTHROPIC_VISION_MODEL") ?? anthropicModel)
+            : llmProvider === "ollama"
+              ? (read("OLLAMA_VISION_MODEL") ?? "llava")
+              : (read("VISION_MODEL") ?? defaultModel),
     },
 
     search: {

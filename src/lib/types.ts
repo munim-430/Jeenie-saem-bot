@@ -16,7 +16,7 @@ export type AgentId =
   | "core" // General Cognitive Agent (LLM, may still call the search tool)
   | "offline"; // No LLM configured/reachable: canned or search-only answers
 
-export type LlmProvider = "anthropic" | "openai" | "ollama" | "none";
+export type LlmProvider = "deepseek" | "anthropic" | "openai" | "ollama" | "none";
 
 export interface ChatMessage {
   role: "user" | "assistant";

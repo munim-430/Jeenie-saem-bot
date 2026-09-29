@@ -39,6 +39,7 @@ function mockClaude(answer: string): CapturedRequest[] {
 
 function useClaude(extra: Record<string, string> = {}) {
   vi.stubEnv("LLM_PROVIDER", "auto");
+  vi.stubEnv("DEEPSEEK_API_KEY", "");
   vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
   vi.stubEnv("OPENAI_API_KEY", "");
   vi.stubEnv("OLLAMA_BASE_URL", "");

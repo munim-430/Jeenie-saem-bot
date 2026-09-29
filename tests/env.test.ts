@@ -6,6 +6,8 @@ afterEach(() => {
 });
 
 function stubClean() {
+  vi.stubEnv("DEEPSEEK_API_KEY", "");
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
   vi.stubEnv("OPENAI_API_KEY", "");
   vi.stubEnv("LLM_PROVIDER", "");
   vi.stubEnv("OLLAMA_BASE_URL", "");

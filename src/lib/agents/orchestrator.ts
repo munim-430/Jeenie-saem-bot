@@ -421,7 +421,9 @@ async function searchQueryFor(turn: Turn, resolved: ResolvedModel | null, signal
       // Claude thinks adaptively and thinking counts toward the cap, so give it
       // room and ask for the lightest effort on this one-line task.
       maxOutputTokens: claude ? 1_024 : 60,
-      providerOptions: claude ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } } : undefined,
+      providerOptions: claude
+        ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } }
+        : resolved.providerOptions,
       maxRetries: 0,
       abortSignal: withTimeout(QUERY_REWRITE_TIMEOUT_MS, signal),
     });
@@ -475,7 +477,7 @@ function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Orchestr
     return fixed("offline", turn.lang, text);
   }
 
-  // Tool calling is reliable on Claude and OpenAI; many Ollama models ignore or garble tools.
+  // Tool calling is reliable on DeepSeek, Claude and OpenAI; many Ollama models ignore or garble tools.
   const useTools = resolved.provider !== "ollama" && !options.searchFailed;
   const found: SourceLink[] = [];
   let context: string | undefined;
