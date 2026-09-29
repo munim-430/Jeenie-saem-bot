@@ -50,6 +50,15 @@ function modelFor(provider: LlmProvider, models: Record<Exclude<LlmProvider, "no
   return provider === "none" ? models.openai : models[provider];
 }
 
+/**
+ * DeepSeek discontinued the deepseek-chat / deepseek-reasoner names on 24 July 2026, so a
+ * deployment still configured with one would fail every request: map them to a live model.
+ */
+function deepseekModel(name: string): string | undefined {
+  const value = read(name);
+  return value && /^deepseek-(?:chat|reasoner)$/i.test(value) ? "deepseek-v4-flash" : value;
+}
+
 /** A valid IANA time zone, else Asia/Dhaka (where Jeannie's operator lives). */
 function timeZone(): string {
   const tz = read("JEANNIE_TIMEZONE") ?? DEFAULT_TIMEZONE;
@@ -93,14 +102,13 @@ export function getEnv() {
   const defaultModel = read("DEFAULT_MODEL") ?? "gpt-4o";
   const ollamaModel = read("OLLAMA_MODEL") ?? "llama3.1";
   const textModels = {
-    // DeepSeek retired the deepseek-chat / deepseek-reasoner aliases on 24 July 2026.
-    deepseek: read("DEEPSEEK_MODEL") ?? "deepseek-v4-flash",
+    deepseek: deepseekModel("DEEPSEEK_MODEL") ?? "deepseek-v4-flash",
     anthropic: anthropicModel,
     openai: defaultModel,
     ollama: ollamaModel,
   };
   const visionModels = {
-    deepseek: read("DEEPSEEK_VISION_MODEL") ?? "deepseek-v4-flash-vision-exp",
+    deepseek: deepseekModel("DEEPSEEK_VISION_MODEL") ?? "deepseek-v4-flash-vision-exp",
     anthropic: read("ANTHROPIC_VISION_MODEL") ?? anthropicModel,
     openai: read("VISION_MODEL") ?? defaultModel,
     ollama: read("OLLAMA_VISION_MODEL") ?? "llava",
@@ -143,7 +151,7 @@ export function getEnv() {
       // DeepSeek's native web_search server tool (Anthropic-compatible Messages API): no extra key.
       deepseekApiKey: deepseekKey,
       deepseekAnthropicBaseUrl: (read("DEEPSEEK_ANTHROPIC_BASE_URL") ?? "https://api.deepseek.com/anthropic").replace(/\/+$/, ""),
-      deepseekSearchModel: read("DEEPSEEK_SEARCH_MODEL") ?? "deepseek-v4-flash",
+      deepseekSearchModel: deepseekModel("DEEPSEEK_SEARCH_MODEL") ?? "deepseek-v4-flash",
       tavilyApiKey: read("TAVILY_API_KEY"),
       googleApiKey: read("GOOGLE_CSE_API_KEY"),
       googleCseId: read("GOOGLE_CSE_ID"),
