@@ -86,11 +86,15 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
   // data is not asked for every file at once. A clip not warmed yet still streams.
   useEffect(() => {
     const controller = new AbortController();
+    // Read the whole body: fetch() resolves at the headers, and the limit below only
+    // holds if a worker waits for the download itself.
     const warm = (name: (typeof CLIP_NAMES)[number]) =>
-      fetch(clips[name].src, { signal: controller.signal }).then(
-        () => undefined,
-        () => undefined,
-      );
+      fetch(clips[name].src, { signal: controller.signal })
+        .then((res) => res.blob())
+        .then(
+          () => undefined,
+          () => undefined,
+        );
     const rest = CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name));
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);

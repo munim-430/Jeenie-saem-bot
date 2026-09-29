@@ -7,7 +7,9 @@ contact, faint composed smile. Higgsfield media `ecc09fc0-847a-4ca4-b2eb-a1a4a08
 (= `assets/avatar/source/fullbody.png`). Immutable; see ADR 0001. Also written **N**.
 
 **Clip** — one pre-rendered 9:16 video of the avatar. Classes:
-- **loop** — plays until the state changes: idle, sway, listening, speaking.
+- **loop** — gated as a loop (closes on itself): idle, sway, listening, speaking. The app loops idle,
+  listening and speaking (`talking` in code) while their state lasts, and plays one cycle of sway as the
+  idle variation.
 - **one-shot** (N→N) — plays once and hands back to idle: every emote.
 - **entry** (—→N), **exit** (N→—), **variant-end** (N→N(B)): outfit_change, environment_change.
 

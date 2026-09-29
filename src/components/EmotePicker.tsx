@@ -31,7 +31,7 @@ export function EmotePicker({ director }: { director: AvatarDirector }) {
             </button>
           ))}
           <button type="button" data-emote="sway" onClick={() => director.vary("sway")}>
-            sway (idle)
+            sway (plays when idle)
           </button>
         </div>
       ) : null}
