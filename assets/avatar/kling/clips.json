@@ -19,19 +19,29 @@
    "note": "chosen over 6b008644, which opens its mouth mid-loop"
   },
   {
+   "n": 2,
+   "id": "entry",
+   "class": "entry",
+   "file": "02_entry.mp4",
+   "job": "e7ea1158-65e8-488f-aec3-98a0270121b7",
+   "derived": "03_exit.mp4 reversed (ffmpeg reverse, CRF 16)",
+   "psnr": {
+    "last": 40.16
+   },
+   "verdict": "accept",
+   "note": "Kling cannot render end-frame-only (job 04014eb1 failed, refunded); eyes open, smile, lands on NEUTRAL"
+  },
+  {
    "n": 3,
    "id": "exit",
    "class": "exit",
-   "file": null,
-   "job": [
-    "ad9ad046-c886-4687-9c96-33c5b54e5481",
-    "f4bd17b3-b3f6-478c-be99-ab8a54f4c152"
-   ],
+   "file": "03_exit.mp4",
+   "job": "e7ea1158-65e8-488f-aec3-98a0270121b7",
    "psnr": {
-    "f0": 40.8
+    "f0": 41.04
    },
-   "verdict": "reject",
-   "note": "2 attempts, both turn to a back view where the short skirt exposes her; attempt 2 ignored 'profile only'. Needs a design change, not a third retry"
+   "verdict": "accept",
+   "note": "attempt 3, redesigned as a goodbye nod with eyes closing (no turn). Attempts 1-2 (ad9ad046, f4bd17b3) turned to a back view that exposes her; right hand drops to the side f54-72, fingers clean"
   },
   {
    "n": 4,
