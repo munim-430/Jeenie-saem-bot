@@ -19,7 +19,7 @@ Canvas-based holographic visualizers. Ready for Vercel with zero extra configura
 | --- | --- |
 | **Orchestrator (Jeannie Core)** | Reads each text, voice, or image prompt and routes it to one specialist. |
 | **IoT Interceptor** | Any smart-home or IoT command or query gets exactly `Yes, it is done.` (`네, 처리되었습니다.` in Korean). No tools, no LLM. |
-| **Live Search Agent** | Time-sensitive or fact-checking questions go to Tavily, then Google Custom Search, then DuckDuckGo. The results are summarized with inline `[n]` citations. |
+| **Live Search Agent** | Time-sensitive or fact-checking questions go to DeepSeek's native web search (same `DEEPSEEK_API_KEY`), then Tavily and Google Custom Search if configured, then DuckDuckGo. The results are summarized with inline `[n]` citations. |
 | **Vision & Localization Agent** | Image attachments (documents, screenshots, camera frames) get a structured bilingual analysis, with visible text transcribed and translated. |
 | **Hangeul Admin Bridge** | Fetches admin reports and status checks from the Hangeul portal on demand. Uses mock data when live access isn't configured, and sends a daily report to Telegram. |
 | **Mistake Audit Agent** | "Audit this for mistakes", "실수 점검해줘": answers in a fixed frame (Issue · Cause · Recommendation) and asks for approval. "승인" / "approve" gets a standard execution confirmation; "취소" / "cancel" puts it on hold. |
@@ -94,7 +94,7 @@ or down, Jeannie answers without memory.
    - The framework preset is detected as **Next.js**.
 3. **Set environment variables.**
    - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
-   - At minimum, set a language model key (`DEEPSEEK_API_KEY`) and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
+   - At minimum, set `DEEPSEEK_API_KEY`: it drives both the conversation and live web search (DeepSeek's native `web_search`). `TAVILY_API_KEY` and Google Custom Search are optional extra fallbacks before the keyless DuckDuckGo.
    - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
 4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
 5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
@@ -129,7 +129,8 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_VISION_MODEL` | Claude. The default model is `claude-opus-5`; `claude-sonnet-5` and `claude-haiku-4-5` are cheaper. If Claude's safety classifiers decline a request, it is retried on a fallback model automatically. |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `DEFAULT_MODEL`, `VISION_MODEL` | OpenAI, or any OpenAI-compatible endpoint such as Groq or OpenRouter. The default model is `gpt-4o`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
-| `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
+| `DEEPSEEK_SEARCH_MODEL`, `DEEPSEEK_ANTHROPIC_BASE_URL` | Optional overrides for DeepSeek's native web search (defaults `deepseek-v4-flash`, `https://api.deepseek.com/anthropic`). |
+| `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Optional fallback search providers after DeepSeek. DuckDuckGo is the keyless last resort. |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Jeannie's main voice. `eleven_multilingual_v2` speaks Korean; `eleven_flash_v2_5` is faster. With only the key set, the premade voice "Rachel" is used; free plans must set the ID of a voice they created, since library voices return HTTP 402 there (Jeannie then falls back to the Edge voice). |
 | `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | Memory. The key is server-only; the publishable/anon key can't read memory. See [Memory](#memory-supabase). |
 | `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |

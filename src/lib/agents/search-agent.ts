@@ -249,6 +249,78 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+// DeepSeek's Anthropic-compatible Messages API runs the native `web_search` server tool
+// itself: one request = one model turn that searches, then answers with citations.
+interface DeepSeekSearchBlock {
+  type?: unknown;
+  text?: unknown;
+  content?: unknown;
+  citations?: Array<{ type?: unknown; url?: unknown; title?: unknown; cited_text?: unknown }>;
+}
+
+interface DeepSeekWebResult {
+  type?: unknown;
+  url?: unknown;
+  title?: unknown;
+  page_age?: unknown;
+}
+
+/** Messages API response → results (+ the model's cited summary). Exported for tests. */
+export function parseDeepSeekSearch(data: { content?: DeepSeekSearchBlock[] }): ProviderOutcome {
+  const blocks = Array.isArray(data.content) ? data.content : [];
+  const cited = new Map<string, string[]>();
+  const texts: string[] = [];
+  for (const block of blocks) {
+    if (block.type !== "text") continue;
+    if (typeof block.text === "string") texts.push(block.text);
+    for (const c of block.citations ?? []) {
+      if (typeof c.url !== "string" || typeof c.cited_text !== "string") continue;
+      cited.set(c.url, [...(cited.get(c.url) ?? []), c.cited_text]);
+    }
+  }
+  const results: SearchResult[] = [];
+  for (const block of blocks) {
+    if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+    for (const item of block.content as DeepSeekWebResult[]) {
+      if (item.type !== "web_search_result" || typeof item.url !== "string") continue;
+      const result = normalizeResult(
+        { title: item.title, url: item.url, snippet: (cited.get(item.url) ?? []).join(" … "), publishedDate: item.page_age },
+        "deepseek",
+      );
+      if (result) results.push(result);
+    }
+  }
+  return { results, answer: nonEmptyString(texts.join("").replace(/\s+/g, " ")) };
+}
+
+function deepseek(apiKey: string, baseUrl: string, model: string): ProviderRun {
+  return async (query, maxResults, signal) => {
+    const res = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        authorization: `Bearer ${apiKey}`,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1024,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }],
+        messages: [
+          {
+            role: "user",
+            content: `Search the web for: ${query}\nThen summarise in 2-4 sentences what the ${maxResults} most relevant results say, citing them.`,
+          },
+        ],
+      }),
+      signal,
+    });
+    await ensureOk(res);
+    return parseDeepSeekSearch((await res.json()) as { content?: DeepSeekSearchBlock[] });
+  };
+}
+
 interface TavilyResponse {
   answer?: unknown;
   results?: Array<{ title?: unknown; url?: unknown; content?: unknown; published_date?: unknown }>;
@@ -524,9 +596,15 @@ function duckDuckGo(): ProviderRun {
   };
 }
 
-function providerChain(env: JeannieEnv): Array<{ id: SearchProvider; run: ProviderRun }> {
-  const chain: Array<{ id: SearchProvider; run: ProviderRun }> = [];
-  const { tavilyApiKey, googleApiKey, googleCseId } = env.search;
+/** A DeepSeek search is a whole model turn (search + answer), so it gets a longer budget. */
+const DEEPSEEK_TIMEOUT_MS = 20_000;
+
+function providerChain(env: JeannieEnv): Array<{ id: SearchProvider; run: ProviderRun; timeoutMs?: number }> {
+  const chain: Array<{ id: SearchProvider; run: ProviderRun; timeoutMs?: number }> = [];
+  const { deepseekApiKey, deepseekAnthropicBaseUrl, deepseekSearchModel, tavilyApiKey, googleApiKey, googleCseId } = env.search;
+  if (deepseekApiKey) {
+    chain.push({ id: "deepseek", run: deepseek(deepseekApiKey, deepseekAnthropicBaseUrl, deepseekSearchModel), timeoutMs: DEEPSEEK_TIMEOUT_MS });
+  }
   if (tavilyApiKey) chain.push({ id: "tavily", run: tavily(tavilyApiKey) });
   if (googleApiKey && googleCseId) chain.push({ id: "google", run: google(googleApiKey, googleCseId) });
   chain.push({ id: "duckduckgo", run: duckDuckGo() });
@@ -556,7 +634,7 @@ function errorName(error: unknown): string {
 export interface WebSearchOptions {
   maxResults?: number;
   signal?: AbortSignal | null;
-  /** Per-provider budget; 8 s by default (tests shorten it). */
+  /** Per-provider budget; 8 s by default, 20 s for DeepSeek (tests shorten it). */
   providerTimeoutMs?: number;
 }
 
@@ -613,10 +691,11 @@ async function runProviderChain(query: string, options: WebSearchOptions): Promi
   if (cached) return cached;
 
   const failures: string[] = [];
-  for (const { id, run } of chain) {
+  for (const { id, run, timeoutMs } of chain) {
     if (options.signal?.aborted) break;
     try {
-      const outcome = await run(q, maxResults, withTimeout(options.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, options.signal));
+      const budget = options.providerTimeoutMs ?? timeoutMs ?? PROVIDER_TIMEOUT_MS;
+      const outcome = await run(q, maxResults, withTimeout(budget, options.signal));
       const results = dedupeResults(outcome.results).slice(0, maxResults);
       if (results.length > 0 || outcome.answer) {
         const response: SearchResponse = { query: q, provider: id, results };
@@ -641,6 +720,7 @@ function formatDate(value: string | undefined): string | null {
 }
 
 const PROVIDER_LABEL: Record<SearchProvider | "none", string> = {
+  deepseek: "DeepSeek web search",
   tavily: "Tavily",
   google: "Google Custom Search",
   duckduckgo: "DuckDuckGo",

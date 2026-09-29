@@ -140,6 +140,10 @@ export function getEnv() {
     },
 
     search: {
+      // DeepSeek's native web_search server tool (Anthropic-compatible Messages API): no extra key.
+      deepseekApiKey: deepseekKey,
+      deepseekAnthropicBaseUrl: (read("DEEPSEEK_ANTHROPIC_BASE_URL") ?? "https://api.deepseek.com/anthropic").replace(/\/+$/, ""),
+      deepseekSearchModel: read("DEEPSEEK_SEARCH_MODEL") ?? "deepseek-v4-flash",
       tavilyApiKey: read("TAVILY_API_KEY"),
       googleApiKey: read("GOOGLE_CSE_API_KEY"),
       googleCseId: read("GOOGLE_CSE_ID"),
@@ -175,6 +179,7 @@ export type JeannieEnv = ReturnType<typeof getEnv>;
 
 export function configuredSearchProviders(env: JeannieEnv = getEnv()): SearchProvider[] {
   const providers: SearchProvider[] = [];
+  if (env.search.deepseekApiKey) providers.push("deepseek");
   if (env.search.tavilyApiKey) providers.push("tavily");
   if (env.search.googleApiKey && env.search.googleCseId) providers.push("google");
   providers.push("duckduckgo"); // keyless fallback, always available

@@ -65,7 +65,7 @@ export interface ApiError {
   code: string;
 }
 
-export type SearchProvider = "tavily" | "google" | "duckduckgo";
+export type SearchProvider = "deepseek" | "tavily" | "google" | "duckduckgo";
 
 export interface SearchResult {
   title: string;
@@ -79,7 +79,7 @@ export interface SearchResult {
 export interface SearchResponse {
   query: string;
   provider: SearchProvider | "none";
-  /** Short synthesized answer when the provider offers one (Tavily, DuckDuckGo instant answers). */
+  /** Short synthesized answer when the provider offers one (DeepSeek, Tavily, DuckDuckGo instant answers). */
   answer?: string;
   results: SearchResult[];
   /** Human-readable note when every provider failed or none is configured. */

@@ -15,7 +15,7 @@ type Led = "on" | "warn" | "idle" | "off";
 
 const LED_CLASS: Record<Led, string> = { on: "led-on", warn: "led-warn", idle: "led-idle", off: "" };
 
-const PROVIDER_LABEL: Record<string, string> = { tavily: "Tavily", google: "Google", duckduckgo: "DDG" };
+const PROVIDER_LABEL: Record<string, string> = { deepseek: "DeepSeek", tavily: "Tavily", google: "Google", duckduckgo: "DDG" };
 const ENGINE_SHORT: Record<TtsEngine, string> = { elevenlabs: "11LABS", edge: "EDGE", browser: "BROWSER" };
 const VOICE_ROW_LABEL: Record<TtsEngine, string> = { elevenlabs: "11Labs", edge: "Edge", browser: "Browser" };
 const LANG_SHORT: Record<ResolvedLang, string> = { en: "EN", ko: "KO", bilingual: "EN+KO" };
