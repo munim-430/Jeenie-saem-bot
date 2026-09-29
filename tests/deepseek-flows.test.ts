@@ -97,8 +97,20 @@ describe("DeepSeek as the brain", () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-openai-test");
     expect(getEnv().llm.provider).toBe("none");
     vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    vi.stubEnv("DEEPSEEK_MODEL", "deepseek-v4-pro");
+    expect(getEnv().llm).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro" });
+  });
+
+  it("maps the retired deepseek-chat / deepseek-reasoner names to a live model", () => {
+    // A stale DEEPSEEK_MODEL=deepseek-chat in the deployment would otherwise break every reply.
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    vi.stubEnv("DEEPSEEK_MODEL", "deepseek-chat");
+    vi.stubEnv("DEEPSEEK_SEARCH_MODEL", " DeepSeek-Reasoner ");
+    const env = getEnv();
+    expect(env.llm.model).toBe("deepseek-v4-flash");
+    expect(env.search.deepseekSearchModel).toBe("deepseek-v4-flash");
     vi.stubEnv("DEEPSEEK_MODEL", "deepseek-reasoner");
-    expect(getEnv().llm).toMatchObject({ provider: "deepseek", model: "deepseek-reasoner" });
+    expect(getEnv().llm.model).toBe("deepseek-v4-flash");
   });
 
   it("sends images to Claude or OpenAI when set, else to DeepSeek's vision model", () => {

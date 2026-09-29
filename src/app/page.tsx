@@ -22,7 +22,7 @@ import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
-import { fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
+import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +38,8 @@ export default function JeannieHud() {
     reason: "required",
   });
   const [hasAccessKey, setHasAccessKey] = useState(false);
+  // Bumped on every key entry so a greeting refused with a stale key is retried.
+  const [keyVersion, setKeyVersion] = useState(0);
   const [sessionStart, setSessionStart] = useState<number | null>(null);
   const [prefersKorean, setPrefersKorean] = useState(false);
 
@@ -105,8 +107,22 @@ export default function JeannieHud() {
         unheardGreetingRef.current = greeting;
         speak(greeting, "ko");
       })
-      .catch(() => undefined);
-  }, [awayMs, statusLoaded, keyNeeded, hasAccessKey, greet, speak]);
+      .catch((error: unknown) => {
+        // A missing or stale key: ask for it, then greet once it is entered.
+        if (!(error instanceof ApiRequestError) || !error.needsAccessKey) return;
+        greetedRef.current = false;
+        setKeyDialog({ open: true, reason: readAccessKey() ? "rejected" : "required" });
+      });
+  }, [awayMs, statusLoaded, keyNeeded, hasAccessKey, keyVersion, greet, speak]);
+
+  // The avatar screen has no lock button, so a phone without a key is asked for it
+  // straight away; otherwise she would stand silent until the first message.
+  const promptedForKeyRef = useRef(false);
+  useEffect(() => {
+    if (promptedForKeyRef.current || !avatarMode || !keyNeeded || hasAccessKey) return;
+    promptedForKeyRef.current = true;
+    setKeyDialog({ open: true, reason: "required" });
+  }, [avatarMode, keyNeeded, hasAccessKey]);
 
   useEffect(() => {
     if (speech.speaking) unheardGreetingRef.current = null;
@@ -210,6 +226,7 @@ export default function JeannieHud() {
   const submitKey = (key: string) => {
     writeAccessKey(key);
     setHasAccessKey(true);
+    setKeyVersion((v) => v + 1);
     setKeyDialog((prev) => ({ ...prev, open: false }));
     chat.retryPending();
   };
