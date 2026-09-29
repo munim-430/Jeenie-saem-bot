@@ -35,7 +35,9 @@ below before touching code.
 
 ## Clip set status (2026-09-29)
 
-16 accepted in `assets/avatar/kling/` (see `clips.json`): idle, entry, exit, peek, spin, sway, sway_2,
-shyness, excitement, stress, sadness, frustration, concern, supportive, listening, speaking.
-Rejected / missing: air_kiss (hand defect), curiosity, love, heartbeat, korean_greeting (owner chose not
-to re-run), outfit_change, environment_change (deferred). ~88.5 credits spent this round; balance ~176.
+19 accepted in `assets/avatar/kling/` (see `clips.json`): idle, entry, exit, peek, spin, sway, sway_2,
+curiosity, shyness, excitement, love, stress, sadness, frustration, concern, supportive, heartbeat,
+listening, speaking.
+Rejected / missing: air_kiss (hand defect), korean_greeting (attempt 4 kept the waist straight but
+moved too little: Part 2 35.85 dB), outfit_change, environment_change (deferred; round-trip design
+recommended). ~124.5 credits spent this round.

@@ -98,6 +98,20 @@
    "verdict": "accept"
   },
   {
+   "n": 8,
+   "id": "curiosity",
+   "class": "oneshot",
+   "file": "08_curiosity.mp4",
+   "job": "4b983a8c-d3e8-4512-b5e2-09a1607dec25",
+   "psnr": {
+    "f0": 41.59,
+    "last": 42.55,
+    "min": 21.39
+   },
+   "verdict": "accept",
+   "note": "side lean + head tilt, eyes held open on the lens (fixes the eyes-drop reject)"
+  },
+  {
    "n": 9,
    "id": "shyness",
    "class": "oneshot",
@@ -122,6 +136,20 @@
     "min": 26.51
    },
    "verdict": "accept"
+  },
+  {
+   "n": 11,
+   "id": "love",
+   "class": "oneshot",
+   "file": "11_love.mp4",
+   "job": "c81e9974-41c8-422e-aa43-32236e91f35c",
+   "psnr": {
+    "f0": 41.57,
+    "last": 42.63,
+    "min": 21.57
+   },
+   "verdict": "accept",
+   "note": "hands stay behind the back; adoring grin + sway (fixes the merged-fingers reject)"
   },
   {
    "n": 12,
@@ -192,6 +220,20 @@
    "verdict": "accept"
   },
   {
+   "n": 17,
+   "id": "korean_greeting",
+   "class": "oneshot",
+   "file": "17_korean_greeting__rejected.mp4",
+   "job": "b6f62426-c23d-499f-9906-bf196f8f7a4e",
+   "psnr": {
+    "f0": 41.53,
+    "last": 42.85,
+    "min": 35.85
+   },
+   "verdict": "reject",
+   "note": "attempt 4, head-only chin dip: no waist bend at last, but fails Part 2 (35.85 > 34 dB, too little motion)"
+  },
+  {
    "n": 18,
    "id": "air_kiss",
    "class": "oneshot",
@@ -204,6 +246,20 @@
    },
    "verdict": "reject",
    "note": "lowering hand smears then renders claw-like with red skin, f92-100; peak frame is clean"
+  },
+  {
+   "n": 19,
+   "id": "heartbeat",
+   "class": "oneshot",
+   "file": "19_heartbeat.mp4",
+   "job": "a35ac081-c007-400c-92f9-341dc74d73e6",
+   "psnr": {
+    "f0": 41.58,
+    "last": 42.77,
+    "min": 33.24
+   },
+   "verdict": "accept",
+   "note": "natural chest breaths, top keeps its shape (fixes the midriff reject)"
   },
   {
    "n": 22,
