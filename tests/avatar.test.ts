@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { CLIP_NAMES, DEFAULT_CLIPS, ESSENTIAL_CLIPS, mergeClipManifest } from "@/lib/avatar/clips";
+import { CLIP_NAMES, CLIP_VERSION, DEFAULT_CLIPS, ESSENTIAL_CLIPS, clipNameFor, mergeClipManifest } from "@/lib/avatar/clips";
 import { emotePickerEnabled } from "@/lib/avatar/debug";
 import { EMOTES } from "@/lib/emote";
-import { KLING_NAMES, ingestPlan } from "../scripts/avatar-clips/kling.mjs";
+import { CLIP_VERSION as INGEST_CLIP_VERSION, KLING_NAMES, ingestPlan } from "../scripts/avatar-clips/kling.mjs";
+import { oneShotDeadlineMs } from "@/hooks/useAvatarDirector";
 import klingClips from "../assets/avatar/kling/clips.json";
 import {
   INITIAL_DIRECTOR,
   baseStateOf,
   cueOf,
   directorReducer,
+  shouldDeferCue,
+  type ClipCue,
   type DirectorEvent,
   type DirectorState,
 } from "@/lib/avatar/director";
@@ -93,13 +96,13 @@ describe("avatar director", () => {
     expect(run([{ type: "ended", seq: first.seq }], second)).toBe(second);
   });
 
-  it("listening cuts the one-shot and plays the listening loop under a focus", () => {
+  it("listening cuts the one-shot and keeps the idle loop running under a focus", () => {
     const state = run([
       { type: "emote", emote: "greeting" },
       { type: "base", base: "listening" },
     ]);
     expect(state.playing).toBeNull();
-    expect(cueOf(state)).toEqual({ emote: "listening", key: "listening", loop: true, focus: true });
+    expect(cueOf(state)).toEqual({ emote: "listening", key: "idle", loop: true, focus: true });
   });
 
   it("holds emotes that arrive while listening until the mic is released", () => {
@@ -121,19 +124,36 @@ describe("avatar director", () => {
 });
 
 describe("avatar clips", () => {
-  it("every emote has its own clip, in the table and in the pipeline manifest", () => {
-    expect([...CLIP_NAMES].sort()).toEqual([...EMOTES].sort());
-    for (const emote of EMOTES) {
-      expect(DEFAULT_CLIPS[emote].src).toBe(`/avatar/${emote}.mp4`);
-      expect(manifest).toHaveProperty(emote);
+  it("listening reuses the idle clip; every other emote has its own, in the table and the manifest", () => {
+    expect(clipNameFor("listening")).toBe("idle");
+    expect(clipNameFor("love")).toBe("love");
+    const clipEmotes = EMOTES.filter((e) => e !== "listening");
+    expect([...CLIP_NAMES].sort()).toEqual([...clipEmotes].sort());
+    for (const name of CLIP_NAMES) {
+      expect(DEFAULT_CLIPS[name].src).toMatch(new RegExp(`^/avatar/${name}\\.mp4(\\?v=${CLIP_VERSION})?$`));
+      expect(manifest).toHaveProperty(name);
     }
-    expect(Object.keys(manifest).sort()).toEqual([...EMOTES].sort());
+    expect(Object.keys(manifest).sort()).toEqual([...clipEmotes].sort());
   });
 
-  it("loops exactly the base states; the essential clips cover every state before a reply", () => {
-    const loops = EMOTES.filter((e) => DEFAULT_CLIPS[e].loop).sort();
-    expect(loops).toEqual(["idle", "listening", "talking"]);
-    expect([...ESSENTIAL_CLIPS].sort()).toEqual(["greeting", "idle", "listening", "talking"]);
+  it("versions the Kling clip URLs so a stale service-worker cache is bypassed", () => {
+    expect(INGEST_CLIP_VERSION).toBe(CLIP_VERSION);
+    for (const [name, entry] of Object.entries(manifest)) {
+      const kling = (entry as { source?: string }).source === "kling";
+      expect({ name, versioned: entry.src.endsWith(`?v=${CLIP_VERSION}`) }).toEqual({ name, versioned: kling });
+    }
+  });
+
+  it("loops idle and talking; the essential clips cover every state before a reply", () => {
+    const loops = CLIP_NAMES.filter((e) => DEFAULT_CLIPS[e].loop).sort();
+    expect(loops).toEqual(["idle", "talking"]);
+    expect([...ESSENTIAL_CLIPS].sort()).toEqual(["greeting", "idle", "talking"]);
+  });
+
+  it("gives a one-shot time to wait out one idle cycle before its safety timeout", () => {
+    expect(oneShotDeadlineMs(DEFAULT_CLIPS, "spin")).toBe(
+      Math.round((DEFAULT_CLIPS.spin.duration + DEFAULT_CLIPS.idle.duration) * 1000 + 5000),
+    );
   });
 
   it("the static table agrees with the pipeline manifest on files and looping", () => {
@@ -164,6 +184,30 @@ describe("avatar clips", () => {
   });
 });
 
+describe("seamless cuts", () => {
+  const idle: ClipCue = { emote: "idle", key: "idle", loop: true, focus: false };
+  const listening: ClipCue = { emote: "listening", key: "idle", loop: true, focus: true };
+  const talking: ClipCue = { emote: "talking", key: "talking", loop: true, focus: false };
+  const love: ClipCue = { emote: "love", key: "love#1", loop: false, focus: false };
+
+  it("a one-shot over idle waits for idle's loop point", () => {
+    expect(shouldDeferCue(idle, love)).toBe(true);
+    expect(shouldDeferCue(idle, { ...love, emote: "sway", key: "sway#2" })).toBe(true);
+  });
+
+  it("voice, mic and one-shots over talking cut at once", () => {
+    expect(shouldDeferCue(talking, love)).toBe(false);
+    expect(shouldDeferCue(idle, talking)).toBe(false);
+    expect(shouldDeferCue(love, idle)).toBe(false);
+    expect(shouldDeferCue(null, love)).toBe(false);
+  });
+
+  it("pressing the mic never switches clips: listening keeps idle's key", () => {
+    expect(cueOf(run([{ type: "base", base: "listening" }])).key).toBe(idle.key);
+    expect(shouldDeferCue(listening, love)).toBe(true);
+  });
+});
+
 describe("Kling ingest", () => {
   it("ships only accepted clips, under their app names", () => {
     const plan = ingestPlan(klingClips);
@@ -177,7 +221,6 @@ describe("Kling ingest", () => {
         "frustration",
         "heartbeat",
         "idle",
-        "listening",
         "love",
         "peek",
         "sadness",

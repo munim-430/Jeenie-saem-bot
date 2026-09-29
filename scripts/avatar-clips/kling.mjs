@@ -4,7 +4,6 @@
 export const KLING_NAMES = {
   idle_neutral: "idle",
   speaking: "talking",
-  listening: "listening",
   sway: "sway",
   sway_2: "excited",
   peek: "peek",
@@ -21,8 +20,15 @@ export const KLING_NAMES = {
   heartbeat: "heartbeat",
 };
 
-/** Clips the player loops while their state lasts (sway is a one-shot idle variation). */
-const LOOPS = new Set(["idle", "talking", "listening"]);
+/**
+ * Bumped whenever the shipped clips change: clip URLs carry it as `?v=`, so a phone whose
+ * service worker still holds the previous set fetches the new files on the first open.
+ * Must match CLIP_VERSION in src/lib/avatar/clips.ts (a test checks both).
+ */
+export const CLIP_VERSION = "k2";
+
+/** Clips the player loops while their state lasts (sway is played one cycle at a time). */
+const LOOPS = new Set(["idle", "talking"]);
 
 /**
  * @param {{ clips: { id: string, file: string | null, verdict: string }[] }} clipsJson

@@ -61,14 +61,23 @@ export interface ClipCue {
   /** Changes whenever the player must (re)start a clip. */
   key: string;
   loop: boolean;
-  /** Listening: its own clip plus the CSS focus treatment. */
+  /** Listening: the idle loop plus the CSS focus treatment. */
   focus: boolean;
 }
 
-/** What the stage should show for a state: a one-shot over the base loop, else the base loop itself. */
+/** What the stage should show for a state. Listening shares idle's key so the loop is not restarted. */
 export function cueOf(state: DirectorState): ClipCue {
   const focus = state.base === "listening";
   if (state.playing) return { emote: state.playing, key: `${state.playing}#${state.seq}`, loop: false, focus };
   const emote: Emote = state.base;
-  return { emote, key: state.base, loop: true, focus };
+  return { emote, key: state.base === "talking" ? "talking" : "idle", loop: true, focus };
+}
+
+/**
+ * Every clip meets the neutral pose only at its first and last frame, so a cut into the middle
+ * of the idle loop jumps. A one-shot that arrives over idle therefore waits for idle's loop point
+ * (at most one idle cycle); everything else (voice, mic, one-shots over talking) cuts at once.
+ */
+export function shouldDeferCue(shown: ClipCue | null, next: ClipCue): boolean {
+  return shown !== null && shown.loop && shown.key === "idle" && !next.loop;
 }

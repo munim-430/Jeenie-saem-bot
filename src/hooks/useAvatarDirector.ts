@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useState } from "react";
-import { CLIP_MANIFEST_URL, DEFAULT_CLIPS, mergeClipManifest, type ClipTable } from "@/lib/avatar/clips";
+import { CLIP_MANIFEST_URL, DEFAULT_CLIPS, clipNameFor, mergeClipManifest, type ClipTable } from "@/lib/avatar/clips";
 import { INITIAL_DIRECTOR, baseStateOf, cueOf, directorReducer, type ClipCue } from "@/lib/avatar/director";
 import type { OneShotEmote, ReplyEmote } from "@/lib/emote";
 
@@ -9,6 +9,11 @@ import type { OneShotEmote, ReplyEmote } from "@/lib/emote";
 // (stage unmounted, decode error, tab throttled) and hand back to the base state.
 // Generous: on a cold load the clip itself may take a few seconds to arrive.
 const ENDED_GRACE_MS = 5000;
+
+/** Longest a one-shot can take to hand back: it may first wait out one idle cycle (stage deferral). */
+export function oneShotDeadlineMs(clips: ClipTable, emote: Parameters<typeof clipNameFor>[0]): number {
+  return (clips[clipNameFor(emote)].duration + clips.idle.duration) * 1000 + ENDED_GRACE_MS;
+}
 
 export interface AvatarDirector {
   cue: ClipCue;
@@ -41,10 +46,7 @@ export function useAvatarDirector({ listening, speaking }: { listening: boolean;
   const { playing, seq } = state;
   useEffect(() => {
     if (!playing) return;
-    const timer = setTimeout(
-      () => dispatch({ type: "ended", seq }),
-      clips[playing].duration * 1000 + ENDED_GRACE_MS,
-    );
+    const timer = setTimeout(() => dispatch({ type: "ended", seq }), oneShotDeadlineMs(clips, playing));
     return () => clearTimeout(timer);
   }, [playing, seq, clips]);
 

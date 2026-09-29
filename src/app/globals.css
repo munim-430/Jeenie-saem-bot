@@ -490,8 +490,9 @@
   object-position: center bottom;
   opacity: 0;
   transform-origin: 50% 30%;
+  /* Matches FADE_MS in AvatarStage.tsx. */
   transition:
-    opacity 150ms linear,
+    opacity 400ms ease-in-out,
     transform 600ms ease;
   pointer-events: none;
 }

@@ -7,14 +7,16 @@ import {
   CLIP_NAMES,
   DEFAULT_CLIPS,
   ESSENTIAL_CLIPS,
+  clipNameFor,
   type ClipTable,
 } from "@/lib/avatar/clips";
-import type { ClipCue } from "@/lib/avatar/director";
+import { shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
 import { cn } from "@/lib/utils";
 
 // Two stacked muted videos: the next clip starts on the hidden one and fades in
-// over the current one (~150 ms), so cuts between clips never flash.
-const FADE_MS = 150;
+// over the current one (~400 ms), so cuts between clips never flash. The CSS
+// transition on .avatar-video matches this.
+const FADE_MS = 400;
 /** Background clip downloads running at once after the essential clips. */
 const WARM_CONCURRENCY = 2;
 
@@ -36,50 +38,73 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
   // a clip that ends after the cue moved on must not end the new one-shot.
   const loadedKeys = useRef<[string | null, string | null]>([null, null]);
   const cueKeyRef = useRef<string | null>(null);
+  // The cue on screen now (it may lag `cue` while a one-shot waits for idle's loop point).
+  const shownCueRef = useRef<ClipCue | null>(null);
   const onEndedRef = useRef(onEnded);
 
   useEffect(() => {
     onEndedRef.current = onEnded;
   });
 
-  const info = clips[cue.emote];
-  const { key, loop } = cue;
+  const info = clips[clipNameFor(cue.emote)];
+  const { emote, key, loop } = cue;
 
   useEffect(() => {
     const videos = [videoA.current, videoB.current] as const;
-    const target: 0 | 1 = startedRef.current ? (frontRef.current === 0 ? 1 : 0) : 0;
-    startedRef.current = true;
-    const video = videos[target];
     cueKeyRef.current = key;
-    if (!video) return;
-    loadedKeys.current[target] = key;
-
+    const next: ClipCue = { emote, key, loop, focus: false };
     let cancelled = false;
     let pauseTimer: ReturnType<typeof setTimeout> | undefined;
-    // React only sets `muted` as a property after mount; autoplay needs it before play().
-    video.muted = true;
-    video.loop = loop;
-    video.poster = info.poster;
-    if (video.getAttribute("src") !== info.src) video.src = info.src;
-    else video.currentTime = 0;
+    let release: (() => void) | undefined;
 
-    const reveal = () => {
+    const begin = () => {
       if (cancelled) return;
-      frontRef.current = target;
-      setFront(target);
-      const other = videos[target === 0 ? 1 : 0];
-      // Hold the outgoing clip until it has faded out, then stop decoding it.
-      if (other && other !== video) pauseTimer = setTimeout(() => other.pause(), FADE_MS + 60);
+      const target: 0 | 1 = startedRef.current ? (frontRef.current === 0 ? 1 : 0) : 0;
+      startedRef.current = true;
+      const video = videos[target];
+      if (!video) return;
+      loadedKeys.current[target] = key;
+      shownCueRef.current = next;
+      // React only sets `muted` as a property after mount; autoplay needs it before play().
+      video.muted = true;
+      video.loop = loop;
+      video.poster = info.poster;
+      if (video.getAttribute("src") !== info.src) video.src = info.src;
+      else video.currentTime = 0;
+
+      const reveal = () => {
+        if (cancelled) return;
+        frontRef.current = target;
+        setFront(target);
+        const other = videos[target === 0 ? 1 : 0];
+        // Hold the outgoing clip until it has faded out, then stop decoding it.
+        if (other && other !== video) pauseTimer = setTimeout(() => other.pause(), FADE_MS + 60);
+      };
+      // Muted inline playback is allowed without a gesture; if it is refused anyway
+      // (data saver, decode error) show the poster rather than a stale clip.
+      video.play().then(reveal, reveal);
     };
-    // Muted inline playback is allowed without a gesture; if it is refused anyway
-    // (data saver, decode error) show the poster rather than a stale clip.
-    video.play().then(reveal, reveal);
+
+    const shown = videos[frontRef.current];
+    if (shown && !shown.paused && shouldDeferCue(shownCueRef.current, next)) {
+      // Let idle finish its cycle: its last frame is the neutral pose the one-shot starts on.
+      shown.loop = false;
+      shown.addEventListener("ended", begin, { once: true });
+      release = () => {
+        shown.removeEventListener("ended", begin);
+        // Still waiting (the cue moved on first): idle keeps looping until the next cue decides.
+        if (shownCueRef.current?.loop) shown.loop = true;
+      };
+    } else {
+      begin();
+    }
 
     return () => {
       cancelled = true;
       clearTimeout(pauseTimer);
+      release?.();
     };
-  }, [key, loop, info.src, info.poster]);
+  }, [emote, key, loop, info.src, info.poster]);
 
   // Warm the HTTP / service-worker cache so later clips start instantly: the clips
   // every state needs first, then the rest a couple at a time so a phone on mobile

@@ -1,31 +1,23 @@
 {
   "idle": {
-    "src": "/avatar/idle.mp4",
-    "poster": "/avatar/idle.jpg",
+    "src": "/avatar/idle.mp4?v=k2",
+    "poster": "/avatar/idle.jpg?v=k2",
     "duration": 6.042,
     "loop": true,
     "placeholder": false,
     "source": "kling"
   },
-  "listening": {
-    "src": "/avatar/listening.mp4",
-    "poster": "/avatar/listening.jpg",
-    "duration": 8.042,
-    "loop": true,
-    "placeholder": false,
-    "source": "kling"
-  },
   "talking": {
-    "src": "/avatar/talking.mp4",
-    "poster": "/avatar/talking.jpg",
+    "src": "/avatar/talking.mp4?v=k2",
+    "poster": "/avatar/talking.jpg?v=k2",
     "duration": 8.042,
     "loop": true,
     "placeholder": false,
     "source": "kling"
   },
   "sway": {
-    "src": "/avatar/sway.mp4",
-    "poster": "/avatar/sway.jpg",
+    "src": "/avatar/sway.mp4?v=k2",
+    "poster": "/avatar/sway.jpg?v=k2",
     "duration": 8.042,
     "loop": false,
     "placeholder": false,
@@ -53,104 +45,104 @@
     "placeholder": false
   },
   "supportive": {
-    "src": "/avatar/supportive.mp4",
-    "poster": "/avatar/supportive.jpg",
+    "src": "/avatar/supportive.mp4?v=k2",
+    "poster": "/avatar/supportive.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "concern": {
-    "src": "/avatar/concern.mp4",
-    "poster": "/avatar/concern.jpg",
+    "src": "/avatar/concern.mp4?v=k2",
+    "poster": "/avatar/concern.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "sadness": {
-    "src": "/avatar/sadness.mp4",
-    "poster": "/avatar/sadness.jpg",
+    "src": "/avatar/sadness.mp4?v=k2",
+    "poster": "/avatar/sadness.jpg?v=k2",
     "duration": 7.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "love": {
-    "src": "/avatar/love.mp4",
-    "poster": "/avatar/love.jpg",
+    "src": "/avatar/love.mp4?v=k2",
+    "poster": "/avatar/love.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "heartbeat": {
-    "src": "/avatar/heartbeat.mp4",
-    "poster": "/avatar/heartbeat.jpg",
+    "src": "/avatar/heartbeat.mp4?v=k2",
+    "poster": "/avatar/heartbeat.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "shyness": {
-    "src": "/avatar/shyness.mp4",
-    "poster": "/avatar/shyness.jpg",
+    "src": "/avatar/shyness.mp4?v=k2",
+    "poster": "/avatar/shyness.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "curiosity": {
-    "src": "/avatar/curiosity.mp4",
-    "poster": "/avatar/curiosity.jpg",
+    "src": "/avatar/curiosity.mp4?v=k2",
+    "poster": "/avatar/curiosity.jpg?v=k2",
     "duration": 5.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "excitement": {
-    "src": "/avatar/excitement.mp4",
-    "poster": "/avatar/excitement.jpg",
+    "src": "/avatar/excitement.mp4?v=k2",
+    "poster": "/avatar/excitement.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "excited": {
-    "src": "/avatar/excited.mp4",
-    "poster": "/avatar/excited.jpg",
+    "src": "/avatar/excited.mp4?v=k2",
+    "poster": "/avatar/excited.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "stress": {
-    "src": "/avatar/stress.mp4",
-    "poster": "/avatar/stress.jpg",
+    "src": "/avatar/stress.mp4?v=k2",
+    "poster": "/avatar/stress.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "frustration": {
-    "src": "/avatar/frustration.mp4",
-    "poster": "/avatar/frustration.jpg",
+    "src": "/avatar/frustration.mp4?v=k2",
+    "poster": "/avatar/frustration.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "peek": {
-    "src": "/avatar/peek.mp4",
-    "poster": "/avatar/peek.jpg",
+    "src": "/avatar/peek.mp4?v=k2",
+    "poster": "/avatar/peek.jpg?v=k2",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "spin": {
-    "src": "/avatar/spin.mp4",
-    "poster": "/avatar/spin.jpg",
+    "src": "/avatar/spin.mp4?v=k2",
+    "poster": "/avatar/spin.jpg?v=k2",
     "duration": 8.042,
     "loop": false,
     "placeholder": false,

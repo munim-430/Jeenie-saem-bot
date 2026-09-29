@@ -38,6 +38,21 @@ Verdict: **no blockers**. Ready for the owner's phone test on the Vercel preview
    hosted outside Vercel.
 6. **Lip-sync is still generic.** It is planned for the next release (audio-gated mouth).
 
+## Follow-up: jumpy idle on the preview (fixed)
+The owner still saw idle jump on the preview.
+- **Cause:** the app cut into idle **mid-loop**. The sway variation every 30–60 s and emotes started
+  at once. Clips only meet NEUTRAL at their first and last frames, and idle drifts up to 33.6 dB away
+  mid-loop. Listening had also become a separate clip, so the mic caused a cut too.
+- **Fix:**
+  - Emotes and sway now wait for idle's loop point (at most one idle cycle).
+  - Voice and mic changes still cut at once, with a 400 ms blend.
+  - Listening is idle plus a zoom again.
+  - Clip URLs carry `?v=k2`, so a phone with the old cache fetches the new clips on the first open.
+- **Measured in real Chrome** (the lowest PSNR across a cut: the smaller it is, the bigger the jump):
+  worst cut **35.9 dB before → 41.9 dB after**. An emote now appears 1.5–3.9 s after the tap.
+- The legacy greeting on open still cuts at about 35 dB. It is an off-anchor MiniMax clip, kept by the
+  owner's choice.
+
 ## Release steps for the owner
 1. Open the preview on your phone (you are signed in to Vercel).
 2. Tap **Emotes (QA)** and play every emote.
