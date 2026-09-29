@@ -649,14 +649,15 @@
 /* Preview-only QA emote picker (EmotePicker): never rendered on production. */
 .emote-picker {
   position: absolute;
-  top: max(0.75rem, env(safe-area-inset-top));
-  right: 0.75rem;
+  /* Below her face: the picker must not hide what is being checked. */
+  top: 38%;
+  right: 0.5rem;
   z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.5rem;
-  max-width: 70vw;
+  max-width: 42vw;
 }
 .emote-picker button {
   border-radius: 999px;
