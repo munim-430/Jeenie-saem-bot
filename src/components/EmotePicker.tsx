@@ -8,7 +8,14 @@ import { REPLY_EMOTES } from "@/lib/emote";
 // QA picker (preview deployments only): plays any emote on tap so every clip can be
 // checked on a real phone before a release goes live.
 
-export function EmotePicker({ director }: { director: AvatarDirector }) {
+interface EmotePickerProps {
+  director: AvatarDirector;
+  /** Plays talking against a scripted voice (on / off) to check the mouth rests. */
+  onVoiceTest: () => void;
+  voiceTestRunning: boolean;
+}
+
+export function EmotePicker({ director, onVoiceTest, voiceTestRunning }: EmotePickerProps) {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -32,6 +39,9 @@ export function EmotePicker({ director }: { director: AvatarDirector }) {
           ))}
           <button type="button" data-emote="sway" onClick={() => director.vary("sway")}>
             sway (plays when idle)
+          </button>
+          <button type="button" data-voice-test="" onClick={onVoiceTest} disabled={voiceTestRunning}>
+            {voiceTestRunning ? "voice test…" : "voice test"}
           </button>
         </div>
       ) : null}

@@ -38,3 +38,33 @@ export function countFrames(file) {
   if (res.status !== 0 || matches.length === 0) throw new Error(`could not count frames of ${file}`);
   return Number(matches.at(-1)[1]);
 }
+
+/** Mouth region of the 720x1280 frame (every clip is anchored to the same neutral pose). */
+const MOUTH = { x: 338, y: 160, w: 44, h: 22 };
+/** A pixel darker than this inside the mouth crop is the gap between the lips. */
+const LIP_GAP_LUMA = 110;
+/** A frame counts as a rest when it has at most this many more gap pixels than the closed mouth. */
+const REST_SLACK = 18;
+
+/**
+ * Times (s) of the frames where her mouth is closed or barely parted, so a talking clip can be
+ * paused there during a silence without freezing on an open mouth. Frame 0 is the neutral,
+ * closed mouth and sets the baseline.
+ */
+export function mouthRestTimes(file) {
+  const res = spawnSync(
+    FFMPEG,
+    ["-v", "error", "-i", file, "-vf", `crop=${MOUTH.w}:${MOUTH.h}:${MOUTH.x}:${MOUTH.y}`, "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+    { maxBuffer: 1 << 28 },
+  );
+  if (res.status !== 0) throw new Error(`could not read the mouth region of ${file}`);
+  const size = MOUTH.w * MOUTH.h;
+  const gaps = [];
+  for (let off = 0; off + size <= res.stdout.length; off += size) {
+    let dark = 0;
+    for (let i = off; i < off + size; i++) if (res.stdout[i] < LIP_GAP_LUMA) dark++;
+    gaps.push(dark);
+  }
+  const limit = gaps[0] + REST_SLACK;
+  return gaps.flatMap((dark, i) => (dark <= limit ? [Math.round((i / FPS) * 1000) / 1000] : []));
+}

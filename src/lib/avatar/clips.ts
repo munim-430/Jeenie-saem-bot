@@ -11,6 +11,8 @@ export interface ClipInfo {
   loop: boolean;
   /** Built from frame sheets until the generated clip lands. */
   placeholder: boolean;
+  /** Talking only: times (s) where her mouth is closed or barely parted, to rest on during silence. */
+  rests?: number[];
 }
 
 /** Emotes that have their own clip file ("listening" is the idle loop plus a CSS focus). */
@@ -24,7 +26,7 @@ export const CLIP_MANIFEST_URL = "/avatar/manifest.json";
  * Carried on every clip URL as `?v=`: a phone whose service worker still holds an older clip set
  * misses its cache and fetches the new files. Must match scripts/avatar-clips/kling.mjs.
  */
-export const CLIP_VERSION = "k2";
+export const CLIP_VERSION = "k3";
 
 /** Page backdrop behind the clips, sampled from the clip background (top edge / floor). */
 export const AVATAR_BACKDROP = "#dbc7c7";
@@ -53,7 +55,7 @@ export const DEFAULT_CLIPS: ClipTable = {
   shyness: clip("shyness", 6.042, false, false),
   curiosity: clip("curiosity", 5.042, false, false),
   excitement: clip("excitement", 6.042, false, false),
-  excited: clip("excited", 6.042, false, false),
+  playful: clip("playful", 6.042, false, false),
   stress: clip("stress", 6.042, false, false),
   frustration: clip("frustration", 6.042, false, false),
   peek: clip("peek", 6.042, false, false),
@@ -84,18 +86,29 @@ function isClipInfo(value: unknown): value is ClipInfo {
   );
 }
 
+/** Ascending, finite times inside the clip. */
+function isRestList(value: unknown, duration: number): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((t, i) => typeof t === "number" && Number.isFinite(t) && t >= 0 && t <= duration && (i === 0 || t > value[i - 1]))
+  );
+}
+
 /** Overlays valid manifest entries on `base`; anything malformed keeps the static entry. */
 export function mergeClipManifest(base: ClipTable, manifest: unknown): ClipTable {
   if (!manifest || typeof manifest !== "object") return base;
   const next: ClipTable = { ...base };
   for (const [name, entry] of Object.entries(manifest as Record<string, unknown>)) {
     if (!isEmote(name) || name === "listening" || !isClipInfo(entry)) continue;
+    const rests = (entry as { rests?: unknown }).rests;
     next[name] = {
       src: entry.src,
       poster: entry.poster,
       duration: entry.duration,
       loop: entry.loop,
       placeholder: Boolean((entry as { placeholder?: unknown }).placeholder),
+      ...(isRestList(rests, entry.duration) ? { rests } : {}),
     };
   }
   return next;

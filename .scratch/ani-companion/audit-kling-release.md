@@ -30,13 +30,13 @@ Verdict: **no blockers**. Ready for the owner's phone test on the Vercel preview
    `[emote:…]` text shows in chat, voice or Telegram.
 2. **The old greeting, air_kiss and nod clips sit slightly off the anchor** (about 33 dB). You may see
    a small shift when she switches to or from them. This was kept by the owner's choice.
-3. **"excited" and "excitement" are close names.** The AI may mix them up. Consider renaming
-   `excited` to `playful` later.
+3. ~~**"excited" and "excitement" are close names.**~~ Done: `excited` is now `playful` (see below).
 4. **First visit downloads each clip twice** when the service worker is not yet active (warm-up plus
    player). This behaviour predates the release. Repeat visits cost nothing.
 5. **`?debug=emotes` shows the picker on non-Vercel builds.** It only matters if the app is ever
    hosted outside Vercel.
-6. **Lip-sync is still generic.** It is planned for the next release (audio-gated mouth).
+6. ~~**Lip-sync is still generic.**~~ Partly done: her mouth now rests when her voice pauses (see
+   below). It is not word-exact lip-sync.
 
 ## Follow-up: jumpy idle on the preview (fixed)
 The owner still saw idle jump on the preview.
@@ -53,9 +53,31 @@ The owner still saw idle jump on the preview.
 - The legacy greeting on open still cuts at about 35 dB. It is an off-anchor MiniMax clip, kept by the
   owner's choice.
 
+## Follow-up: mouth rests in voice pauses, `excited` renamed to `playful`
+- **Mouth rests:**
+  - While she talks, the app reads her voice level every frame.
+  - After 180 ms of silence, the talking clip runs on to the next frame where her mouth is closed or
+    barely parted, and holds there. It plays on 60 ms after her voice returns.
+  - The ingest script finds these "rest" frames: 75 of 193 frames, never more than 0.92 s apart.
+  - This only works with the server voice, where the level is really measured. With the browser voice
+    she talks exactly as before.
+- **Rename:** `excited` is now `playful`, so it is no longer confused with `excitement`. A model that
+  still writes `[emote:excited]` gets `playful`. Clip URLs moved to `?v=k3`.
+- **Measured in real Chrome (QA "voice test": 1.2 s voice / 0.8 s silence, ×4):**
+
+  | Check | Target | Result |
+  |---|---|---|
+  | Mouth rests in each gap | ≤ 1.0 s | 229–396 ms |
+  | Resume after the voice returns | ≤ 150 ms | ~96 ms |
+  | Mouth darkness on held frames (closed = 22) | ≤ 40 | 7, 37, 39, 36 |
+  | Console errors | 0 | 0 |
+- **Jump harness, playful included:** worst cut 41.9 dB, green. The legacy greeting is unchanged at
+  35.2 dB.
+- **Tests:** 943 pass, including a new voice-gate suite.
+
 ## Release steps for the owner
 1. Open the preview on your phone (you are signed in to Vercel).
-2. Tap **Emotes (QA)** and play every emote.
+2. Tap **Emotes (QA)** and play every emote. Tap **voice test** to watch her mouth rest in the pauses.
 3. Chat a little to check the AI's emote choice.
 4. If happy: GitHub PR → **Ready for review** → **Merge**. Vercel deploys the live site.
 5. If anything is wrong after going live: in Vercel, **Promote** the previous deployment. This is

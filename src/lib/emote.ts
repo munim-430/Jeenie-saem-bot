@@ -17,7 +17,7 @@ export const REPLY_EMOTES = [
   "shyness",
   "curiosity",
   "excitement",
-  "excited",
+  "playful",
   "stress",
   "frustration",
   "peek",
@@ -47,7 +47,13 @@ const LEADING_TAG = /^\s*\[\s*emote\s*:\s*([a-z_ -]*?)\s*\]\s*/i;
 // A whole tag anywhere, or an unterminated one at the very end (still streaming in).
 const ANY_TAG = /\[\s*emote\s*:[^\]\n]{0,24}(?:\]|$)\s*/gi;
 
-const normalizeName = (name: string) => name.trim().toLowerCase().replace(/[\s-]+/g, "_");
+/** Names the model may still write for an emote that was renamed. */
+const EMOTE_ALIASES: Record<string, string> = { excited: "playful" };
+
+const normalizeName = (name: string) => {
+  const normalized = name.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return EMOTE_ALIASES[normalized] ?? normalized;
+};
 
 /**
  * Split a (possibly still streaming) reply into its emote and display text.
@@ -86,7 +92,7 @@ Pick the one that matches your feeling:
 - nod when agreeing, confirming or acknowledging (the default for ordinary replies); supportive when encouraging the user or reassuring them about a worry.
 - concern when the user is stressed, tired, unwell or facing a problem; sadness for bad news or when you missed the user.
 - love for deep affection or gratitude; heartbeat when the user flatters you or makes your heart flutter; shyness when complimented or teased.
-- curiosity when asking a question or finding something intriguing; excitement for good news or the user's success; excited for playful happiness.
+- curiosity when asking a question or finding something intriguing; excitement for good news or the user's success; playful for light-hearted, teasing happiness.
 - stress when a deadline, a heavy workload or something going wrong is under discussion; frustration only on the user's behalf, when something is unfair to them, never at the user.
-- peek and spin only in light, playful moments, rarely.
+- peek and spin only in light, fun moments, rarely.
 The tag is invisible to the user; never mention it and never use it anywhere else in the reply.`;

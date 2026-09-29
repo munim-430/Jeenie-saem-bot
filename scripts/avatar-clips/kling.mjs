@@ -5,7 +5,7 @@ export const KLING_NAMES = {
   idle_neutral: "idle",
   speaking: "talking",
   sway: "sway",
-  sway_2: "excited",
+  sway_2: "playful",
   peek: "peek",
   spin: "spin",
   curiosity: "curiosity",
@@ -25,7 +25,7 @@ export const KLING_NAMES = {
  * service worker still holds the previous set fetches the new files on the first open.
  * Must match CLIP_VERSION in src/lib/avatar/clips.ts (a test checks both).
  */
-export const CLIP_VERSION = "k2";
+export const CLIP_VERSION = "k3";
 
 /** Clips the player loops while their state lasts (sway is played one cycle at a time). */
 const LOOPS = new Set(["idle", "talking"]);

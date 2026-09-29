@@ -182,6 +182,28 @@ describe("avatar clips", () => {
     expect(merged.idle).toEqual(DEFAULT_CLIPS.idle);
     expect(mergeClipManifest(DEFAULT_CLIPS, null)).toBe(DEFAULT_CLIPS);
   });
+
+  it("ships the talking clip's mouth rests, ascending and inside the clip", () => {
+    const rests = mergeClipManifest(DEFAULT_CLIPS, manifest).talking.rests ?? [];
+    expect(rests.length).toBeGreaterThan(10);
+    expect(rests[0]).toBe(0);
+    for (let i = 1; i < rests.length; i++) {
+      expect(rests[i]).toBeGreaterThan(rests[i - 1]!);
+      // A pause never waits much longer than a second for her mouth to close.
+      expect(rests[i]! - rests[i - 1]!).toBeLessThanOrEqual(1);
+    }
+    expect(rests.at(-1)).toBeLessThan(manifest.talking.duration);
+  });
+
+  it("keeps valid rests and drops junk ones", () => {
+    const talking = { src: "/avatar/talking.mp4", poster: "/avatar/talking.jpg", duration: 2, loop: true };
+    expect(mergeClipManifest(DEFAULT_CLIPS, { talking: { ...talking, rests: [0, 0.5, 1.5] } }).talking.rests).toEqual([
+      0, 0.5, 1.5,
+    ]);
+    for (const rests of [[0.5, 0.2], [0, 3], [0, Number.NaN], "0,1", [-1]]) {
+      expect(mergeClipManifest(DEFAULT_CLIPS, { talking: { ...talking, rests } }).talking.rests).toBeUndefined();
+    }
+  });
 });
 
 describe("seamless cuts", () => {
@@ -216,13 +238,13 @@ describe("Kling ingest", () => {
       [
         "concern",
         "curiosity",
-        "excited",
         "excitement",
         "frustration",
         "heartbeat",
         "idle",
         "love",
         "peek",
+        "playful",
         "sadness",
         "shyness",
         "spin",
@@ -234,7 +256,7 @@ describe("Kling ingest", () => {
     );
     for (const name of names) expect(EMOTES).toContain(name);
     expect(plan.find((p) => p.name === "talking")?.file).toBe("23_speaking.mp4");
-    expect(plan.find((p) => p.name === "excited")?.file).toBe("07_sway_2.mp4");
+    expect(plan.find((p) => p.name === "playful")?.file).toBe("07_sway_2.mp4");
   });
 
   it("never ingests rejected, missing or unmapped clips", () => {

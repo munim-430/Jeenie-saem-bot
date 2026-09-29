@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { countFrames, encode, poster } from "./ffmpeg.mjs";
+import { countFrames, encode, mouthRestTimes, poster } from "./ffmpeg.mjs";
 import { FPS, manifestEntry } from "./plan.mjs";
 import { CLIP_VERSION, ingestPlan } from "./kling.mjs";
 
@@ -40,6 +40,8 @@ function main() {
       ...entry,
       src: `${entry.src}?v=${CLIP_VERSION}`,
       poster: `${entry.poster}?v=${CLIP_VERSION}`,
+      // Talking pauses on these frames while her voice is silent (mouth closed or barely parted).
+      ...(name === "talking" ? { rests: mouthRestTimes(out) } : {}),
       source: "kling",
     };
   }

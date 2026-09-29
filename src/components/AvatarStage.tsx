@@ -11,6 +11,7 @@ import {
   type ClipTable,
 } from "@/lib/avatar/clips";
 import { shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
+import { INITIAL_GATE, atRest, gateStep, nextRest } from "@/lib/avatar/voice-gate";
 import { cn } from "@/lib/utils";
 
 // Two stacked muted videos: the next clip starts on the hidden one and fades in
@@ -25,10 +26,14 @@ interface AvatarStageProps {
   clips: ClipTable;
   /** The current one-shot clip finished. */
   onEnded: () => void;
+  /** Her voice's output level (0..1), read every frame while she talks. */
+  voiceLevel?: () => number;
+  /** The level is measured from the real audio; otherwise talking just loops as before. */
+  voiceMeasured?: boolean;
   className?: string;
 }
 
-export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps) {
+export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = false, className }: AvatarStageProps) {
   const videoA = useRef<HTMLVideoElement>(null);
   const videoB = useRef<HTMLVideoElement>(null);
   const [front, setFront] = useState<0 | 1>(0);
@@ -105,6 +110,42 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
       release?.();
     };
   }, [emote, key, loop, info.src, info.poster]);
+
+  // Mouth rests while her voice pauses: during a silence the talking loop runs on to the next
+  // frame where her mouth is closed or barely parted and holds there, then plays on when the
+  // voice comes back. Only with a measured level; the synthetic one would gate on noise.
+  const rests = clips.talking.rests;
+  const talkingShown = emote === "talking";
+  useEffect(() => {
+    if (!talkingShown || !voiceMeasured || !voiceLevel || !rests?.length) return;
+    let raf = 0;
+    let gate = INITIAL_GATE;
+    let rest: number | null = null;
+    let held: HTMLVideoElement | null = null;
+    const tick = () => {
+      gate = gateStep(gate, voiceLevel(), performance.now());
+      const video = (frontRef.current === 0 ? videoA : videoB).current;
+      if (video && shownCueRef.current?.key === "talking") {
+        if (gate.silent && !video.paused) {
+          rest ??= nextRest(rests, video.currentTime);
+          if (rest !== null && atRest(video.currentTime, rest)) {
+            video.pause();
+            video.currentTime = rest;
+            held = video;
+            rest = null;
+          }
+        } else if (!gate.silent) {
+          rest = null;
+          if (held === video && video.paused) void video.play().catch(() => undefined);
+          held = null;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    // Leaving talking mid-rest needs nothing: the next talking cue restarts the clip.
+    return () => cancelAnimationFrame(raf);
+  }, [talkingShown, voiceMeasured, voiceLevel, rests]);
 
   // Warm the HTTP / service-worker cache so later clips start instantly: the clips
   // every state needs first, then the rest a couple at a time so a phone on mobile

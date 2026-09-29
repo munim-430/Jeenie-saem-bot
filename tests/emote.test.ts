@@ -61,6 +61,13 @@ describe("the Kling emote set", () => {
     }
   });
 
+  it("reads the old excited tag as playful", () => {
+    expect(REPLY_EMOTES).toContain("playful");
+    expect(REPLY_EMOTES).not.toContain("excited");
+    expect(parseEmote("[emote:excited] 좋아요!")).toEqual({ emote: "playful", text: "좋아요!", pending: false });
+    expect(stripEmotes("[emote:excited] 좋아요!")).toBe("좋아요!");
+  });
+
   it("never lets the model drive the app-only clips", () => {
     for (const name of ["idle", "listening", "talking", "sway"]) {
       expect(REPLY_EMOTES).not.toContain(name);

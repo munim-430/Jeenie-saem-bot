@@ -255,6 +255,8 @@ export default function JeannieHud() {
           subtitleLive={latestReply?.status === "streaming" || speech.speaking || speech.preparing}
           recognition={voiceInput}
           onSwitchToHud={() => viewMode.setView("hud")}
+          voiceLevel={speech.getLevel}
+          voiceMeasured={speech.routed}
         />
       ) : (
         // The server renders the HUD (desktop unchanged); phones keep it hidden until the view is known.
