@@ -31,7 +31,11 @@ function reachableOllamaUrl(): string | undefined {
   }
 }
 
-/** Provider for image analysis: DeepSeek cannot read images, so it never qualifies. */
+/**
+ * Provider for image analysis. DeepSeek's chat models can't read images, so a
+ * Claude or OpenAI key wins; with only DeepSeek configured, images go to its
+ * (experimental) vision model.
+ */
 function visionProviderFor(
   text: LlmProvider,
   keys: { anthropic?: string; openai?: string; ollama?: string },
@@ -39,7 +43,7 @@ function visionProviderFor(
   if (text === "anthropic" || text === "openai" || text === "ollama") return text;
   if (keys.anthropic) return "anthropic";
   if (keys.openai) return "openai";
-  return "none";
+  return text === "deepseek" ? "deepseek" : "none";
 }
 
 function modelFor(provider: LlmProvider, models: Record<Exclude<LlmProvider, "none">, string>): string {
@@ -89,13 +93,14 @@ export function getEnv() {
   const defaultModel = read("DEFAULT_MODEL") ?? "gpt-4o";
   const ollamaModel = read("OLLAMA_MODEL") ?? "llama3.1";
   const textModels = {
-    deepseek: read("DEEPSEEK_MODEL") ?? "deepseek-chat",
+    // DeepSeek retired the deepseek-chat / deepseek-reasoner aliases on 24 July 2026.
+    deepseek: read("DEEPSEEK_MODEL") ?? "deepseek-v4-flash",
     anthropic: anthropicModel,
     openai: defaultModel,
     ollama: ollamaModel,
   };
   const visionModels = {
-    deepseek: textModels.deepseek,
+    deepseek: read("DEEPSEEK_VISION_MODEL") ?? "deepseek-v4-flash-vision-exp",
     anthropic: read("ANTHROPIC_VISION_MODEL") ?? anthropicModel,
     openai: read("VISION_MODEL") ?? defaultModel,
     ollama: read("OLLAMA_VISION_MODEL") ?? "llava",

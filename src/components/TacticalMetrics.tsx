@@ -87,7 +87,7 @@ function SystemStatusPanel({
             llmOnline
               ? status.llm.visionProvider !== "none"
                 ? `Vision: ${status.llm.visionProvider} · ${status.llm.visionModel ?? "default"}`
-                : "Vision: off (DeepSeek can't read images; set ANTHROPIC_API_KEY or OPENAI_API_KEY)"
+                : "Vision: off (no vision-capable model connected)"
               : "No LLM configured"
           }
           led={llmOnline ? "on" : "warn"}
