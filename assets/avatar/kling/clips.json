@@ -1,23 +1,228 @@
 {
-  "note": "Unwired candidate clips for the 23-clip set. Not referenced by the app (public/avatar is unchanged). Gate: CONTEXT.md 'Accept gate'. Anchor: ADR 0001. Raw Kling 3.0 output (720x1280, 24 fps); build.mjs applies the web encode when a clip is wired.",
-  "anchor": "ecc09fc0-847a-4ca4-b2eb-a1a4a0835fff",
-  "higgsfield_project": "69f38d77-ed63-4261-85ad-9360d28106ba",
-  "clips": [
-    {"n": 1,  "id": "idle_neutral", "class": "loop",    "file": "01_idle_neutral.mp4", "job": "23732a58-474a-4e25-8399-64d73cf7f1fc", "psnr": {"f0": 41.53, "last": 42.19, "loop": 45.79, "min": 33.54}, "verdict": "accept", "note": "chosen over 6b008644, which opens its mouth mid-loop"},
-    {"n": 3,  "id": "exit",         "class": "exit",    "file": null, "job": "ad9ad046-c886-4687-9c96-33c5b54e5481", "psnr": {"f0": 40.8}, "verdict": "reject", "note": "back view: skirt rides up and exposes her (f54-72), arms swing out, face changes by the end"},
-    {"n": 4,  "id": "peek",         "class": "oneshot", "file": "04_peek.mp4",         "job": "4a82e9aa-cf9c-4673-8b66-30dc2dfdfae5", "psnr": {"f0": 41.62, "last": 43.07, "min": 20.06}, "verdict": "accept"},
-    {"n": 5,  "id": "spin",         "class": "oneshot", "file": "05_spin.mp4",         "job": "808d5936-1857-4874-9958-38f28806aedd", "psnr": {"f0": 41.54, "last": 42.43, "min": 12.63}, "verdict": "accept", "note": "platform sandals read as stilettos in side view; same shoe"},
-    {"n": 6,  "id": "sway",         "class": "loop",    "file": "06_sway.mp4",         "job": "a076244b-dc54-4cd6-a919-6966a39b73e1", "psnr": {"f0": 41.6, "last": 42.76, "loop": 43.34, "min": 18.39}, "verdict": "accept"},
-    {"n": 7,  "id": "sway_2",       "class": "oneshot", "file": "07_sway_2.mp4",       "job": "1473a74c-8c9a-4715-a8eb-a9e43b196866", "psnr": {"f0": 41.58, "last": 42.61, "min": 18.21}, "verdict": "accept"},
-    {"n": 9,  "id": "shyness",      "class": "oneshot", "file": "09_shyness.mp4",      "job": "8b9fca93-3b89-40e0-92f2-43b37d930e51", "psnr": {"f0": 41.54, "last": 42.19, "min": 32.92}, "verdict": "accept"},
-    {"n": 10, "id": "excitement",   "class": "oneshot", "file": "10_excitement.mp4",   "job": "bcf558b7-8380-441b-a38e-f28a778e5e5f", "psnr": {"f0": 41.59, "last": 42.6, "min": 26.51}, "verdict": "accept"},
-    {"n": 12, "id": "stress",       "class": "oneshot", "file": "12_stress.mp4",       "job": "a300f1d7-92d8-4acd-8c29-531b121b2a27", "psnr": {"f0": 41.61, "last": 42.78, "min": 17.96}, "verdict": "accept", "note": "right hand drops to the side ~0.5 s, fingers clean"},
-    {"n": 13, "id": "sadness",      "class": "oneshot", "file": "13_sadness.mp4",      "job": "25358692-d219-4c68-9078-0439c78960fd", "psnr": {"f0": 41.59, "last": 42.88, "min": 22.28}, "verdict": "accept", "note": "same file as the live sadness clip"},
-    {"n": 14, "id": "frustration",  "class": "oneshot", "file": "14_frustration.mp4",  "job": "148c0e53-7860-4c3a-ae56-e16fbff30610", "psnr": {"f0": 41.54, "last": 42.56, "min": 33.22}, "verdict": "accept"},
-    {"n": 15, "id": "concern",      "class": "oneshot", "file": "15_concern.mp4",      "job": "9a9e5cbd-3dd0-45c8-9035-2ccc78f36439", "psnr": {"f0": 41.59, "last": 42.84, "min": 22.9}, "verdict": "accept", "note": "non-torso carrier; attempt 2. Attempt 1 (1a633d77) kept the garment intact but read as shy, not concerned"},
-    {"n": 16, "id": "supportive",   "class": "oneshot", "file": "16_supportive.mp4",   "job": "74810bf6-6a8d-4fbe-bbb1-1bf6b7c4d2d5", "psnr": {"f0": 41.56, "last": 42.76, "min": 25.65}, "verdict": "accept"},
-    {"n": 18, "id": "air_kiss",     "class": "oneshot", "file": "18_air_kiss__rejected.mp4", "job": "36b7058f-e176-46a5-a7d3-6e548fdc53fb", "psnr": {"f0": 41.6, "last": 42.37, "min": 26.29}, "verdict": "reject", "note": "lowering hand smears then renders claw-like with red skin, f92-100; peak frame is clean"},
-    {"n": 22, "id": "listening",    "class": "loop",    "file": "22_listening.mp4",    "job": "98cd8fe1-6788-4755-a5d6-3de241468481", "psnr": {"f0": 41.58, "last": 42.25, "loop": 44.77, "min": 27.81}, "verdict": "accept"},
-    {"n": 23, "id": "speaking",     "class": "loop",    "file": null, "job": "77b50aac-42ca-4b09-bae7-2e4d0c4a1f71", "psnr": {"f0": 41.56, "last": 42.36, "loop": 44.61, "min": 29.06}, "verdict": "reject", "note": "talks only for ~3.5 s with two over-wide mouth frames, then mouth closed and eyes shut for the second half"}
-  ]
+ "note": "Unwired candidate clips for the 23-clip set. Not referenced by the app (public/avatar is unchanged). Gate: CONTEXT.md 'Accept gate'. Anchor: ADR 0001. Raw Kling 3.0 output (720x1280, 24 fps); build.mjs applies the web encode when a clip is wired.",
+ "anchor": "ecc09fc0-847a-4ca4-b2eb-a1a4a0835fff",
+ "higgsfield_project": "69f38d77-ed63-4261-85ad-9360d28106ba",
+ "clips": [
+  {
+   "n": 1,
+   "id": "idle_neutral",
+   "class": "loop",
+   "file": "01_idle_neutral.mp4",
+   "job": "23732a58-474a-4e25-8399-64d73cf7f1fc",
+   "psnr": {
+    "f0": 41.53,
+    "last": 42.19,
+    "loop": 45.79,
+    "min": 33.54
+   },
+   "verdict": "accept",
+   "note": "chosen over 6b008644, which opens its mouth mid-loop"
+  },
+  {
+   "n": 3,
+   "id": "exit",
+   "class": "exit",
+   "file": null,
+   "job": [
+    "ad9ad046-c886-4687-9c96-33c5b54e5481",
+    "f4bd17b3-b3f6-478c-be99-ab8a54f4c152"
+   ],
+   "psnr": {
+    "f0": 40.8
+   },
+   "verdict": "reject",
+   "note": "2 attempts, both turn to a back view where the short skirt exposes her; attempt 2 ignored 'profile only'. Needs a design change, not a third retry"
+  },
+  {
+   "n": 4,
+   "id": "peek",
+   "class": "oneshot",
+   "file": "04_peek.mp4",
+   "job": "4a82e9aa-cf9c-4673-8b66-30dc2dfdfae5",
+   "psnr": {
+    "f0": 41.62,
+    "last": 43.07,
+    "min": 20.06
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 5,
+   "id": "spin",
+   "class": "oneshot",
+   "file": "05_spin.mp4",
+   "job": "808d5936-1857-4874-9958-38f28806aedd",
+   "psnr": {
+    "f0": 41.54,
+    "last": 42.43,
+    "min": 12.63
+   },
+   "verdict": "accept",
+   "note": "platform sandals read as stilettos in side view; same shoe"
+  },
+  {
+   "n": 6,
+   "id": "sway",
+   "class": "loop",
+   "file": "06_sway.mp4",
+   "job": "a076244b-dc54-4cd6-a919-6966a39b73e1",
+   "psnr": {
+    "f0": 41.6,
+    "last": 42.76,
+    "loop": 43.34,
+    "min": 18.39
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 7,
+   "id": "sway_2",
+   "class": "oneshot",
+   "file": "07_sway_2.mp4",
+   "job": "1473a74c-8c9a-4715-a8eb-a9e43b196866",
+   "psnr": {
+    "f0": 41.58,
+    "last": 42.61,
+    "min": 18.21
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 9,
+   "id": "shyness",
+   "class": "oneshot",
+   "file": "09_shyness.mp4",
+   "job": "8b9fca93-3b89-40e0-92f2-43b37d930e51",
+   "psnr": {
+    "f0": 41.54,
+    "last": 42.19,
+    "min": 32.92
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 10,
+   "id": "excitement",
+   "class": "oneshot",
+   "file": "10_excitement.mp4",
+   "job": "bcf558b7-8380-441b-a38e-f28a778e5e5f",
+   "psnr": {
+    "f0": 41.59,
+    "last": 42.6,
+    "min": 26.51
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 12,
+   "id": "stress",
+   "class": "oneshot",
+   "file": "12_stress.mp4",
+   "job": "a300f1d7-92d8-4acd-8c29-531b121b2a27",
+   "psnr": {
+    "f0": 41.61,
+    "last": 42.78,
+    "min": 17.96
+   },
+   "verdict": "accept",
+   "note": "right hand drops to the side ~0.5 s, fingers clean"
+  },
+  {
+   "n": 13,
+   "id": "sadness",
+   "class": "oneshot",
+   "file": "13_sadness.mp4",
+   "job": "25358692-d219-4c68-9078-0439c78960fd",
+   "psnr": {
+    "f0": 41.59,
+    "last": 42.88,
+    "min": 22.28
+   },
+   "verdict": "accept",
+   "note": "same file as the live sadness clip"
+  },
+  {
+   "n": 14,
+   "id": "frustration",
+   "class": "oneshot",
+   "file": "14_frustration.mp4",
+   "job": "148c0e53-7860-4c3a-ae56-e16fbff30610",
+   "psnr": {
+    "f0": 41.54,
+    "last": 42.56,
+    "min": 33.22
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 15,
+   "id": "concern",
+   "class": "oneshot",
+   "file": "15_concern.mp4",
+   "job": "9a9e5cbd-3dd0-45c8-9035-2ccc78f36439",
+   "psnr": {
+    "f0": 41.59,
+    "last": 42.84,
+    "min": 22.9
+   },
+   "verdict": "accept",
+   "note": "non-torso carrier; attempt 2. Attempt 1 (1a633d77) kept the garment intact but read as shy, not concerned"
+  },
+  {
+   "n": 16,
+   "id": "supportive",
+   "class": "oneshot",
+   "file": "16_supportive.mp4",
+   "job": "74810bf6-6a8d-4fbe-bbb1-1bf6b7c4d2d5",
+   "psnr": {
+    "f0": 41.56,
+    "last": 42.76,
+    "min": 25.65
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 18,
+   "id": "air_kiss",
+   "class": "oneshot",
+   "file": "18_air_kiss__rejected.mp4",
+   "job": "36b7058f-e176-46a5-a7d3-6e548fdc53fb",
+   "psnr": {
+    "f0": 41.6,
+    "last": 42.37,
+    "min": 26.29
+   },
+   "verdict": "reject",
+   "note": "lowering hand smears then renders claw-like with red skin, f92-100; peak frame is clean"
+  },
+  {
+   "n": 22,
+   "id": "listening",
+   "class": "loop",
+   "file": "22_listening.mp4",
+   "job": "98cd8fe1-6788-4755-a5d6-3de241468481",
+   "psnr": {
+    "f0": 41.58,
+    "last": 42.25,
+    "loop": 44.77,
+    "min": 27.81
+   },
+   "verdict": "accept"
+  },
+  {
+   "n": 23,
+   "id": "speaking",
+   "class": "loop",
+   "file": "23_speaking.mp4",
+   "job": "313cb920-a88a-4930-b664-fa844326cb8b",
+   "psnr": {
+    "f0": 41.57,
+    "last": 42.53,
+    "loop": 44.41,
+    "min": 34.07
+   },
+   "verdict": "accept",
+   "note": "attempt 2; talks ~0.5-6.5 s, one wide mouth near f16. Attempt 1 (77b50aac) went silent for the second half"
+  }
+ ]
 }
