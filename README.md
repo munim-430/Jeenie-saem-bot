@@ -6,7 +6,7 @@ reports on your Hangeul admin portal, and answers every smart-home command with 
 
 | Layer | Service |
 | --- | --- |
-| **Brain** | [DeepSeek](https://platform.deepseek.com) (`deepseek-chat`). Claude, OpenAI or Ollama still work as alternatives, and handle images, which DeepSeek can't read. |
+| **Brain** | [DeepSeek](https://platform.deepseek.com) (`deepseek-v4-flash`, thinking off for quick spoken replies). Images go to Claude or OpenAI when their key is set, else to DeepSeek's `deepseek-v4-flash-vision-exp`. Claude, OpenAI or Ollama still work as alternatives. |
 | **Voice** | [ElevenLabs](https://elevenlabs.io) (`eleven_multilingual_v2`, English + Korean), with free Edge and browser voices as fallbacks. |
 | **Memory** | [Supabase](https://supabase.com): markdown and JSON Lines notes you upload, searched with Postgres full-text search on every message. |
 
@@ -125,7 +125,7 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `JEANNIE_ACCESS_KEY` | Shared secret for every `/api` route (header `x-jeannie-key` or `Authorization: Bearer`). The HUD prompts for it once and remembers it in this browser. |
 | `JEANNIE_TIMEZONE` | IANA time zone for the Korean session greeting. Default `Asia/Dhaka`. |
 | `LLM_PROVIDER` | `auto` (default: DeepSeek if its key is set, then Claude, then OpenAI, then Ollama), `deepseek`, `anthropic`, `openai` or `ollama`. |
-| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL` | DeepSeek, Jeannie's brain. `deepseek-chat` (default) can call the web-search tool; `deepseek-reasoner` thinks longer but has no tools. DeepSeek can't read images, so image analysis uses Claude or OpenAI when their key is set. |
+| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_VISION_MODEL`, `DEEPSEEK_BASE_URL` | DeepSeek, Jeannie's brain. `deepseek-v4-flash` (default) or `deepseek-v4-pro` (stronger); both call the web-search tool. DeepSeek retired the `deepseek-chat` / `deepseek-reasoner` names on 24 July 2026. Its chat models can't read images, so image analysis uses Claude or OpenAI when their key is set, else `DEEPSEEK_VISION_MODEL` (default `deepseek-v4-flash-vision-exp`, experimental). |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_VISION_MODEL` | Claude. The default model is `claude-opus-5`; `claude-sonnet-5` and `claude-haiku-4-5` are cheaper. If Claude's safety classifiers decline a request, it is retried on a fallback model automatically. |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `DEFAULT_MODEL`, `VISION_MODEL` | OpenAI, or any OpenAI-compatible endpoint such as Groq or OpenRouter. The default model is `gpt-4o`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |

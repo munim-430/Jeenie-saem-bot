@@ -48,6 +48,7 @@ const assistant = (content: string): ChatMessage => ({ role: "assistant", conten
 const ENV = [
   "DEEPSEEK_API_KEY",
   "DEEPSEEK_MODEL",
+  "DEEPSEEK_VISION_MODEL",
   "DEEPSEEK_BASE_URL",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
@@ -87,7 +88,8 @@ describe("DeepSeek as the brain", () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
     vi.stubEnv("OPENAI_API_KEY", "sk-openai-test");
-    expect(getEnv().llm).toMatchObject({ provider: "deepseek", model: "deepseek-chat" });
+    // DeepSeek retired the deepseek-chat / deepseek-reasoner aliases on 24 July 2026.
+    expect(getEnv().llm).toMatchObject({ provider: "deepseek", model: "deepseek-v4-flash" });
   });
 
   it("honours LLM_PROVIDER=deepseek and DEEPSEEK_MODEL, and stays offline without a key", () => {
@@ -99,10 +101,12 @@ describe("DeepSeek as the brain", () => {
     expect(getEnv().llm).toMatchObject({ provider: "deepseek", model: "deepseek-reasoner" });
   });
 
-  it("sends images to Claude or OpenAI, never DeepSeek", () => {
+  it("sends images to Claude or OpenAI when set, else to DeepSeek's vision model", () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
-    expect(getEnv().llm).toMatchObject({ visionProvider: "none" });
-    expect(getLanguageModel("vision")).toBeNull();
+    expect(getEnv().llm).toMatchObject({ visionProvider: "deepseek", visionModel: "deepseek-v4-flash-vision-exp" });
+    expect(getLanguageModel("vision")).toMatchObject({ provider: "deepseek", modelId: "deepseek-v4-flash-vision-exp" });
+    vi.stubEnv("DEEPSEEK_VISION_MODEL", "deepseek-vl-custom");
+    expect(getEnv().llm.visionModel).toBe("deepseek-vl-custom");
 
     vi.stubEnv("OPENAI_API_KEY", "sk-openai-test");
     expect(getEnv().llm).toMatchObject({ visionProvider: "openai", visionModel: "gpt-4o" });
@@ -114,19 +118,21 @@ describe("DeepSeek as the brain", () => {
     expect(getLanguageModel("text")?.provider).toBe("deepseek");
   });
 
-  it("calls the DeepSeek chat completions endpoint", async () => {
+  it("calls the DeepSeek chat completions endpoint with thinking off", async () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
     const urls: string[] = [];
     const auth: string[] = [];
+    const bodies: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       urls.push(String(input));
       auth.push(new Headers(init?.headers).get("authorization") ?? "");
+      bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
       return new Response(
         JSON.stringify({
           id: "c1",
           object: "chat.completion",
           created: 0,
-          model: "deepseek-chat",
+          model: "deepseek-v4-flash",
           choices: [{ index: 0, message: { role: "assistant", content: "Hello, sir." }, finish_reason: "stop" }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }),
@@ -134,14 +140,22 @@ describe("DeepSeek as the brain", () => {
       );
     });
     const resolved = getLanguageModel("text");
-    expect(resolved).toMatchObject({ provider: "deepseek", modelId: "deepseek-chat" });
-    const { text } = await generateText({ model: resolved!.model, prompt: "Hi", maxRetries: 0 });
+    expect(resolved).toMatchObject({ provider: "deepseek", modelId: "deepseek-v4-flash" });
+    const { text } = await generateText({
+      model: resolved!.model,
+      prompt: "Hi",
+      providerOptions: resolved!.providerOptions,
+      maxRetries: 0,
+    });
     expect(text).toBe("Hello, sir.");
     expect(urls[0]).toBe("https://api.deepseek.com/chat/completions");
     expect(auth[0]).toBe("Bearer sk-deepseek-test");
+    // V4 models think before answering by default; Jeannie speaks, so she answers straight away.
+    expect(bodies[0]).toMatchObject({ model: "deepseek-v4-flash", thinking: { type: "disabled" } });
   });
 
-  it("uses tools on deepseek-chat but not on deepseek-reasoner", () => {
+  it("uses tools on DeepSeek chat models but not on deepseek-reasoner", () => {
+    expect(supportsTools({ provider: "deepseek", modelId: "deepseek-v4-flash" })).toBe(true);
     expect(supportsTools({ provider: "deepseek", modelId: "deepseek-chat" })).toBe(true);
     expect(supportsTools({ provider: "deepseek", modelId: "deepseek-reasoner" })).toBe(false);
     expect(supportsTools({ provider: "ollama", modelId: "llama3.1" })).toBe(false);
@@ -155,7 +169,12 @@ describe("DeepSeek as the brain", () => {
     vi.stubEnv("ELEVENLABS_API_KEY", "eleven-test");
     const raw = await statusGET();
     const body = JSON.parse(raw) as SystemStatus;
-    expect(body.llm).toEqual({ provider: "deepseek", model: "deepseek-chat", visionProvider: "none", visionModel: null });
+    expect(body.llm).toEqual({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      visionProvider: "deepseek",
+      visionModel: "deepseek-v4-flash-vision-exp",
+    });
     expect(body.memory).toEqual({ configured: true });
     // ElevenLabs is the main voice with only the API key set (default voice id).
     expect(body.voice.engines[0]).toBe("elevenlabs");

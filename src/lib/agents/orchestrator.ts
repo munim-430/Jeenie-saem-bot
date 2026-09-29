@@ -119,8 +119,8 @@ export function offlineMessage(lang: ResolvedLang, kind: "text" | "vision" = "te
   if (kind === "vision") {
     return localized(
       lang,
-      "Image analysis needs a vision-capable model, and none is connected (DeepSeek can't read images). Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or OLLAMA_BASE_URL with a vision model such as llava, and I'll take a look.",
-      "이미지 분석에는 비전 모델이 필요한데 지금은 연결된 모델이 없어요 (DeepSeek은 이미지를 읽지 못해요). ANTHROPIC_API_KEY나 OPENAI_API_KEY를 설정하거나 OLLAMA_BASE_URL과 llava 같은 비전 모델을 설정해 주시면 바로 분석할게요.",
+      "Image analysis needs a vision-capable model, and none is connected. Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY, or OLLAMA_BASE_URL with a vision model such as llava, and I'll take a look.",
+      "이미지 분석에는 비전 모델이 필요한데 지금은 연결된 모델이 없어요. DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY 중 하나를 설정하거나 OLLAMA_BASE_URL과 llava 같은 비전 모델을 설정해 주시면 바로 분석할게요.",
     );
   }
   return localized(
@@ -456,7 +456,9 @@ async function searchQueryFor(turn: Turn, resolved: ResolvedModel | null, signal
       // Claude thinks adaptively and thinking counts toward the cap, so give it
       // room and ask for the lightest effort on this one-line task.
       maxOutputTokens: claude ? 1_024 : 60,
-      providerOptions: claude ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } } : undefined,
+      providerOptions: claude
+        ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } }
+        : resolved.providerOptions,
       maxRetries: 0,
       abortSignal: withTimeout(QUERY_REWRITE_TIMEOUT_MS, signal),
     });
@@ -517,7 +519,7 @@ async function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Pr
     return fixed("offline", turn.lang, turn.honorific, text);
   }
 
-  // Tool calling is reliable on DeepSeek chat, Claude and OpenAI; not on deepseek-reasoner or most Ollama models.
+  // Tool calling is reliable on DeepSeek V4, Claude and OpenAI; not on the old deepseek-reasoner or most Ollama models.
   const useTools = supportsTools(resolved) && !options.searchFailed;
   const found: SourceLink[] = [];
   let context: string | undefined;
