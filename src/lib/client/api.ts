@@ -182,8 +182,14 @@ export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemSta
 
 // ── Session greeting ────────────────────────────────────────────────────────
 
-export async function fetchSessionGreeting(signal?: AbortSignal): Promise<SessionGreeting> {
-  const res = await request("/api/session", { signal, timeoutMs: STATUS_TIMEOUT_MS });
+/**
+ * The opening line. `awayMs` (time since the user was last seen) lets the
+ * server mention the absence; the server answers within ~4 s either way.
+ */
+export async function fetchSessionGreeting(options: { awayMs?: number; signal?: AbortSignal } = {}): Promise<SessionGreeting> {
+  const away = options.awayMs;
+  const query = away !== undefined && Number.isFinite(away) && away >= 0 ? `?awayMs=${Math.round(away)}` : "";
+  const res = await request(`/api/session${query}`, { signal: options.signal, timeoutMs: STATUS_TIMEOUT_MS });
   try {
     return (await res.json()) as SessionGreeting;
   } catch {

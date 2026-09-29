@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono, Noto_Sans_KR, Orbitron } from "next/font/google";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import "./globals.css";
 
 const display = Orbitron({ subsets: ["latin"], display: "swap", variable: "--font-display" });
@@ -17,7 +18,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0A050A",
+  // Phones default to the avatar screen (light backdrop, see manifest.ts); everything else gets the dark HUD.
+  themeColor: [
+    { media: "(orientation: portrait) and (max-width: 480px) and (pointer: coarse)", color: "#dbc7c7" },
+    { color: "#0A050A" },
+  ],
   colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
@@ -31,7 +36,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${display.variable} ${mono.variable} ${sans.variable} ${korean.variable}`}
       suppressHydrationWarning
     >
-      <body className="bg-void font-sans text-petal-soft antialiased">{children}</body>
+      <body className="bg-void font-sans text-petal-soft antialiased">
+        {children}
+        <ServiceWorkerRegister />
+      </body>
     </html>
   );
 }

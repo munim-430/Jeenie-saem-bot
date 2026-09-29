@@ -1,7 +1,8 @@
 // Telegram bridge: a small Bot API client plus the webhook update handler.
 // Plain-text replies only (no parse_mode), so model output can never break
-// Telegram's markup parser. The bot token lives in request URLs, so errors are
-// logged by method name and status only.
+// Telegram's markup parser. Replies arrive with an emote tag for the avatar
+// (see emote.ts), which is stripped here. The bot token lives in request URLs,
+// so errors are logged by method name and status only.
 
 import { APPROVAL_MARKER, isApprovalReply } from "./agents/audit-flow";
 import { sessionGreeting } from "./agents/etiquette";
@@ -9,6 +10,7 @@ import { formatHangeulReport, getHangeulReport, hangeulHudMode } from "./agents/
 import { checkIoTQuery } from "./agents/iot-interceptor";
 import { runOrchestratorToText } from "./agents/orchestrator";
 import { formatSearchBriefing, webSearch, withTimeout } from "./agents/search-agent";
+import { stripEmotes } from "./emote";
 import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured, type JeannieEnv } from "./env";
 import { getPendingAudit, logAuditDecision, savePendingAudit } from "./memory/store";
 import type { ChatMessage, LangMode, SourceLink } from "./types";
@@ -323,7 +325,7 @@ async function answerWithOrchestrator(
   const messages: ChatMessage[] = pending
     ? [{ role: "assistant", content: pending }, { role: "user", content }]
     : [{ role: "user", content }];
-  const result = await runOrchestratorToText(
+  const reply = await runOrchestratorToText(
     { messages, image, lang },
     {
       trusted,
@@ -331,6 +333,8 @@ async function answerWithOrchestrator(
       onAuditDecision: (decision, items) => void logAuditDecision(chatKey, decision, items),
     },
   );
+  // The emote tag drives the web avatar only; Telegram and the stored audit get plain text.
+  const result = { ...reply, text: stripEmotes(reply.text) };
   if (!deadline.aborted) {
     // Any other reply ends the wait, like the HUD, where approval must follow the audit directly.
     await savePendingAudit(chatKey, result.agent === "audit" && result.text.includes(APPROVAL_MARKER) ? result.text : null);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, isAbortError, openChatStream, readAccessKey } from "@/lib/client/api";
+import { parseEmote, type ReplyEmote } from "@/lib/emote";
 import type { AgentId, ChatMessage, LangMode, LlmProvider, ResolvedLang, SourceLink } from "@/lib/types";
 
 export type HudMessageStatus = "streaming" | "done" | "stopped" | "error";
@@ -18,6 +19,8 @@ export interface HudMessage {
   provider?: LlmProvider | null;
   sources?: SourceLink[];
   latencyMs?: number;
+  /** The reply's leading emote tag; `content` never contains it. */
+  emote?: ReplyEmote | null;
   /** Shown in the HUD only, never sent back to the model (the opening greeting). */
   local?: boolean;
 }
@@ -33,6 +36,7 @@ export interface ChatTelemetry {
 }
 
 export interface CompletedReply {
+  /** Display text, emote tag removed (safe to speak). */
   text: string;
   lang: ResolvedLang | null;
   agent: AgentId | null;
@@ -43,6 +47,8 @@ interface ChatOptions {
   /** Runs before every request (e.g. stop speaking). */
   onBeforeSend?: () => void;
   onReplyComplete?: (reply: CompletedReply) => void;
+  /** Once per reply, as soon as its leading emote tag has streamed in (never for untagged replies). */
+  onEmote?: (emote: ReplyEmote) => void;
   /** 401 access_key_required. `rejected` = a stored key was sent and refused. */
   onAccessKeyRequired?: (rejected: boolean) => void;
 }
@@ -116,7 +122,9 @@ export function useJeannieChat(options: ChatOptions) {
     return conversational.slice(-HISTORY_LIMIT).map((m, index, list): ChatMessage => {
       const isNewest = index === list.length - 1;
       const role = m.role === "user" ? "user" : "assistant";
-      const content = m.content.slice(0, MAX_CHARS);
+      // Give the model its own tags back so it keeps to the protocol.
+      const tagged = role === "assistant" && m.emote ? `[emote:${m.emote}] ${m.content}` : m.content;
+      const content = tagged.slice(0, MAX_CHARS);
       // Only the newest user turn carries its image; older turns are text-only.
       return isNewest && m.image ? { role, content, image: m.image } : { role, content };
     });
@@ -140,9 +148,12 @@ export function useJeannieChat(options: ChatOptions) {
       const started = performance.now();
       let text = "";
       let frame = 0;
+      let emoteSeen = false;
+      // The raw stream opens with an emote tag; only the text after it is shown.
+      const display = (final = false) => parseEmote(text, { final });
       const flush = () => {
         frame = 0;
-        patch(assistantId, { content: text });
+        patch(assistantId, { content: display().text });
       };
 
       try {
@@ -161,6 +172,16 @@ export function useJeannieChat(options: ChatOptions) {
             setTelemetry((prev) => ({ ...prev, lastTtfbMs: ttfb }));
           }
           text += chunk;
+          if (!emoteSeen) {
+            const parsed = display();
+            if (!parsed.pending) {
+              emoteSeen = true;
+              if (parsed.emote) {
+                patch(assistantId, { emote: parsed.emote });
+                optionsRef.current.onEmote?.(parsed.emote);
+              }
+            }
+          }
           // Coalesce token bursts into one render per frame.
           if (!frame) frame = requestAnimationFrame(flush);
         }
@@ -168,21 +189,23 @@ export function useJeannieChat(options: ChatOptions) {
 
         const latency = Math.round(performance.now() - started);
         setTelemetry((prev) => ({ ...prev, lastLatencyMs: latency, lastTtfbMs: ttfb ?? latency }));
-        if (!text.trim()) {
+        const { text: shown, emote } = display(true);
+        if (!shown.trim()) {
           commit((prev) => prev.filter((m) => m.id !== assistantId));
           addSystemLine("Jeannie returned an empty transmission. Try again.");
           return;
         }
-        patch(assistantId, { content: text, status: "done", latencyMs: latency });
-        optionsRef.current.onReplyComplete?.({ text, lang: meta.lang, agent: meta.agent });
+        patch(assistantId, { content: shown, emote, status: "done", latencyMs: latency });
+        optionsRef.current.onReplyComplete?.({ text: shown, lang: meta.lang, agent: meta.agent });
       } catch (error) {
         cancelAnimationFrame(frame);
+        const shown = display(true).text;
         if (isAbortError(error)) {
-          if (text) patch(assistantId, { content: text, status: "stopped" });
+          if (shown) patch(assistantId, { content: shown, status: "stopped" });
           else commit((prev) => prev.filter((m) => m.id !== assistantId));
           return;
         }
-        if (text) patch(assistantId, { content: text, status: "stopped" });
+        if (shown) patch(assistantId, { content: shown, status: "stopped" });
         else commit((prev) => prev.filter((m) => m.id !== assistantId));
 
         if (error instanceof ApiRequestError && error.needsAccessKey) {
@@ -260,9 +283,31 @@ export function useJeannieChat(options: ChatOptions) {
     [commit],
   );
 
+  /** A line she says on her own (the idle check-in): shown like a reply, never sent back to the model. */
+  const announce = useCallback(
+    (content: string, lang: ResolvedLang = "ko") =>
+      commit((prev) => [
+        ...prev,
+        { id: nextId("say"), role: "assistant", content, createdAt: Date.now(), status: "done", lang, local: true },
+      ]),
+    [commit],
+  );
+
   useEffect(() => () => controllerRef.current?.abort(), []);
 
-  return { messages, phase, telemetry, send, stop, retryPending, dropPending, clear, greet, notify: addSystemLine };
+  return {
+    messages,
+    phase,
+    telemetry,
+    send,
+    stop,
+    retryPending,
+    dropPending,
+    clear,
+    greet,
+    announce,
+    notify: addSystemLine,
+  };
 }
 
 export type JeannieChat = ReturnType<typeof useJeannieChat>;

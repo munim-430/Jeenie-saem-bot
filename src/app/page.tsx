@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { AccessKeyDialog, type AccessKeyReason } from "@/components/AccessKeyDialog";
+import { AvatarReturnButton, AvatarScreen } from "@/components/AvatarScreen";
 import { CameraScanner } from "@/components/CameraScanner";
 import { ChatTerminal, type Attachment } from "@/components/ChatTerminal";
 import type { OrbState } from "@/components/HologramOrb";
@@ -11,13 +12,19 @@ import { MemoryPanel } from "@/components/MemoryPanel";
 import { isLangMode } from "@/components/LanguageToggle";
 import { ReactorCore } from "@/components/ReactorCore";
 import { TacticalMetrics } from "@/components/TacticalMetrics";
+import { useAvatarDirector } from "@/hooks/useAvatarDirector";
+import { useIdleWatch } from "@/hooks/useIdleWatch";
 import { useJeannieChat } from "@/hooks/useJeannieChat";
+import { useLastSeen } from "@/hooks/useLastSeen";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
+import { useViewMode } from "@/hooks/useViewMode";
+import { pickCheckIn } from "@/lib/avatar/idle";
 import { fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
 import type { LangMode } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 
@@ -34,6 +41,11 @@ export default function JeannieHud() {
   const [sessionStart, setSessionStart] = useState<number | null>(null);
   const [prefersKorean, setPrefersKorean] = useState(false);
 
+  // Phones get the avatar screen, everything else the HUD (null until hydrated).
+  const viewMode = useViewMode();
+  const avatarMode = viewMode.view === "avatar";
+  const awayMs = useLastSeen();
+
   const system = useSystemStatus();
   const speech = useSpeechOutput({
     serverVoice: system.status ? system.status.voice.engines.some((engine) => engine !== "browser") : true,
@@ -41,10 +53,14 @@ export default function JeannieHud() {
   const voiceOnRef = useRef(voiceOn);
   const attachmentRef = useRef(attachment);
   const listeningRef = useRef(false);
+  // The greeting's text until it has actually been heard (autoplay may block it).
+  const unheardGreetingRef = useRef<string | null>(null);
+  const speechBusyRef = useRef(false);
 
   useEffect(() => {
     voiceOnRef.current = voiceOn;
     attachmentRef.current = attachment;
+    speechBusyRef.current = speech.speaking || speech.preparing;
   });
 
   // Browser-only facts, read after hydration.
@@ -56,7 +72,12 @@ export default function JeannieHud() {
 
   const chat = useJeannieChat({
     lang,
-    onBeforeSend: speech.stop,
+    onBeforeSend: () => {
+      unheardGreetingRef.current = null;
+      speech.stop();
+    },
+    // Only reached after render, when `director` exists.
+    onEmote: (emote) => director.play(emote),
     onReplyComplete: (reply) => {
       // Not while the mic is open: she would be transcribed into the operator's next message.
       if (voiceOnRef.current && !listeningRef.current) speech.speak(reply.text, reply.lang);
@@ -72,17 +93,39 @@ export default function JeannieHud() {
   const { greet } = chat;
   const { speak } = speech;
   useEffect(() => {
-    if (greetedRef.current || !statusLoaded || (keyNeeded && !hasAccessKey)) return;
+    if (greetedRef.current || awayMs === undefined || !statusLoaded || (keyNeeded && !hasAccessKey)) return;
     greetedRef.current = true;
     // Not aborted on cleanup: the ref already stops a second request, and the
     // greeting is skipped anyway once the operator has started chatting.
-    fetchSessionGreeting()
+    fetchSessionGreeting({ awayMs: awayMs ?? undefined })
       .then(({ greeting }) => {
-        // Browsers may block audio before the first click; the text still shows.
-        if (greet(greeting) && voiceOnRef.current && !listeningRef.current) speak(greeting, "ko");
+        if (!greet(greeting) || !voiceOnRef.current || listeningRef.current) return;
+        // Browsers may block audio before the first tap; the text still shows and
+        // the voice gets one more try on the first tap (below).
+        unheardGreetingRef.current = greeting;
+        speak(greeting, "ko");
       })
       .catch(() => undefined);
-  }, [statusLoaded, keyNeeded, hasAccessKey, greet, speak]);
+  }, [awayMs, statusLoaded, keyNeeded, hasAccessKey, greet, speak]);
+
+  useEffect(() => {
+    if (speech.speaking) unheardGreetingRef.current = null;
+  }, [speech.speaking]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const greeting = unheardGreetingRef.current;
+      // Still fetching / playing: it may yet be heard, so keep the retry for later.
+      if (!greeting || speechBusyRef.current) return;
+      unheardGreetingRef.current = null;
+      // Pressing the mic means the user wants to talk, not to be greeted.
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-hold-to-talk]")) return;
+      if (voiceOnRef.current && !listeningRef.current) speak(greeting, "ko");
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [speak]);
 
   const recognitionLang: RecognitionLang =
     lang === "ko" ? "ko-KR" : lang === "en" ? "en-US" : prefersKorean ? "ko-KR" : "en-US";
@@ -107,6 +150,31 @@ export default function JeannieHud() {
   useEffect(() => {
     listeningRef.current = recognition.listening;
   }, [recognition.listening]);
+
+  // Avatar clip state machine: idle / listening / talking plus one-shot emotes.
+  const director = useAvatarDirector({ listening: recognition.listening, speaking: speech.speaking });
+
+  // She bows on every load, the first time her screen is up.
+  const bowedRef = useRef(false);
+  const { play: playEmote, vary: varyEmote } = director;
+  useEffect(() => {
+    if (!avatarMode || bowedRef.current) return;
+    bowedRef.current = true;
+    playEmote("greeting");
+  }, [avatarMode, playEmote]);
+
+  // Idle behaviour (avatar screen only): a nod now and then, one check-in after ~3 min.
+  useIdleWatch({
+    enabled: avatarMode,
+    busy: speech.speaking || speech.preparing || recognition.listening || chat.phase !== "idle",
+    onVariation: () => varyEmote("nod"),
+    onCheckIn: () => {
+      const line = pickCheckIn();
+      chat.announce(line, "ko");
+      playEmote("concern");
+      if (voiceOnRef.current && !listeningRef.current) speak(line, "ko");
+    },
+  });
 
   const { getLevel: speechLevel } = speech;
   const { activityRef } = recognition;
@@ -158,81 +226,102 @@ export default function JeannieHud() {
 
   const conversationCount = chat.messages.filter((m) => m.role !== "system").length;
   const replyLang = chat.messages.findLast((m) => m.role === "assistant" && m.lang)?.lang ?? null;
+  const latestReply = chat.messages.findLast((m) => m.role === "assistant") ?? null;
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-[1920px] flex-col gap-3 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-4 lg:h-[100dvh] lg:overflow-hidden">
-        <HudHeader
-          status={system.status}
-          statusError={system.error}
-          hasAccessKey={hasAccessKey}
-          onAccessKey={() => setKeyDialog({ open: true, reason: "manage" })}
+      {viewMode.view === null ? <div className="view-pending-backdrop" aria-hidden="true" /> : null}
+      {avatarMode ? (
+        <AvatarScreen
+          director={director}
+          subtitle={latestReply?.content ?? ""}
+          subtitleLive={latestReply?.status === "streaming" || speech.speaking || speech.preparing}
+          recognition={voiceInput}
+          onSwitchToHud={() => viewMode.setView("hud")}
         />
-
-        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,300px)_minmax(0,1fr)_minmax(340px,400px)] xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)_minmax(400px,460px)] 2xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(460px,540px)]">
-          <ReactorCore
-            className="order-1 h-[350px] sm:h-[420px] lg:order-2 lg:h-auto lg:min-h-0 lg:py-2"
-            state={orbState}
-            getLevel={getLevel}
-            // The real spectrum only while server audio plays through it; the mic has no samples.
-            analyser={speech.speaking && speech.routed ? speech.analyser : null}
-            activeAgent={chat.telemetry.activeAgent}
-            provider={system.status?.llm.provider ?? chat.telemetry.provider}
-            voiceEngine={speech.engine}
-            preparingVoice={chat.phase === "idle" && speech.preparing}
-            lang={lang}
-          />
-
-          <ChatTerminal
-            className="order-2 h-[72svh] min-h-[460px] lg:order-3 lg:h-auto lg:min-h-0"
-            messages={chat.messages}
-            phase={chat.phase}
-            speaking={speech.speaking || speech.preparing}
-            lang={lang}
-            onLangChange={setLang}
-            voiceOn={voiceOn}
-            onVoiceToggle={toggleVoice}
-            attachment={attachment}
-            onAttach={setAttachment}
-            onOpenCamera={() => setCameraOpen(true)}
-            onSend={chat.send}
-            onStop={() => {
-              chat.stop();
-              speech.stop();
-            }}
-            onClear={() => {
-              chat.clear();
-              speech.stop();
-            }}
-            onNotice={chat.notify}
-            recognition={voiceInput}
-          />
-
-          <TacticalMetrics
-            className="order-3 md:grid md:grid-cols-2 md:items-start lg:order-1 lg:flex lg:min-h-0 lg:items-stretch lg:overflow-y-auto lg:overscroll-contain lg:pb-1 lg:pr-1"
+      ) : (
+        // The server renders the HUD (desktop unchanged); phones keep it hidden until the view is known.
+        <div
+          className={cn(
+            "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-[1920px] flex-col gap-3 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-4 lg:h-[100dvh] lg:overflow-hidden",
+            viewMode.view === null && "view-pending",
+          )}
+        >
+          <HudHeader
             status={system.status}
-            statusLoading={system.loading}
             statusError={system.error}
-            onRetryStatus={system.refresh}
             hasAccessKey={hasAccessKey}
-            lang={lang}
-            onCommand={sendCommand}
-            telemetry={chat.telemetry}
-            messageCount={conversationCount}
-            voiceEngine={speech.engine}
-            replyLang={replyLang}
-            sessionStart={sessionStart}
-          >
-            <MemoryPanel
-              configured={Boolean(system.status?.memory?.configured)}
-              accessKeyRequired={keyNeeded}
-              hasAccessKey={hasAccessKey}
-              statusReady={statusLoaded}
-              onNotice={chat.notify}
+            onAccessKey={() => setKeyDialog({ open: true, reason: "manage" })}
+          />
+
+          <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,300px)_minmax(0,1fr)_minmax(340px,400px)] xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)_minmax(400px,460px)] 2xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(460px,540px)]">
+            <ReactorCore
+              className="order-1 h-[350px] sm:h-[420px] lg:order-2 lg:h-auto lg:min-h-0 lg:py-2"
+              state={orbState}
+              getLevel={getLevel}
+              // The real spectrum only while server audio plays through it; the mic has no samples.
+              analyser={speech.speaking && speech.routed ? speech.analyser : null}
+              activeAgent={chat.telemetry.activeAgent}
+              provider={system.status?.llm.provider ?? chat.telemetry.provider}
+              voiceEngine={speech.engine}
+              preparingVoice={chat.phase === "idle" && speech.preparing}
+              lang={lang}
             />
-          </TacticalMetrics>
-        </main>
-      </div>
+
+            <ChatTerminal
+              className="order-2 h-[72svh] min-h-[460px] lg:order-3 lg:h-auto lg:min-h-0"
+              messages={chat.messages}
+              phase={chat.phase}
+              speaking={speech.speaking || speech.preparing}
+              lang={lang}
+              onLangChange={setLang}
+              voiceOn={voiceOn}
+              onVoiceToggle={toggleVoice}
+              attachment={attachment}
+              onAttach={setAttachment}
+              onOpenCamera={() => setCameraOpen(true)}
+              onSend={chat.send}
+              onStop={() => {
+                chat.stop();
+                speech.stop();
+              }}
+              onClear={() => {
+                chat.clear();
+                speech.stop();
+              }}
+              onNotice={chat.notify}
+              recognition={voiceInput}
+            />
+
+            <TacticalMetrics
+              className="order-3 md:grid md:grid-cols-2 md:items-start lg:order-1 lg:flex lg:min-h-0 lg:items-stretch lg:overflow-y-auto lg:overscroll-contain lg:pb-1 lg:pr-1"
+              status={system.status}
+              statusLoading={system.loading}
+              statusError={system.error}
+              onRetryStatus={system.refresh}
+              hasAccessKey={hasAccessKey}
+              lang={lang}
+              onCommand={sendCommand}
+              telemetry={chat.telemetry}
+              messageCount={conversationCount}
+              voiceEngine={speech.engine}
+              replyLang={replyLang}
+              sessionStart={sessionStart}
+            >
+              <MemoryPanel
+                configured={Boolean(system.status?.memory?.configured)}
+                accessKeyRequired={keyNeeded}
+                hasAccessKey={hasAccessKey}
+                statusReady={statusLoaded}
+                onNotice={chat.notify}
+              />
+            </TacticalMetrics>
+          </main>
+        </div>
+      )}
+      {viewMode.view === "hud" && viewMode.isPhone ? (
+        <AvatarReturnButton onClick={() => viewMode.setView("avatar")} />
+      ) : null}
 
       <CameraScanner
         open={cameraOpen}

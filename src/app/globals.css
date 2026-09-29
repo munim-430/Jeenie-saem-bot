@@ -451,3 +451,197 @@
     opacity: 0.8;
   }
 }
+
+/* ── Avatar screen (phones) ──────────────────────────────────────────────────
+   Light backdrop sampled from the clips (see src/lib/avatar/clips.ts). */
+
+/* Until the view mode is known, phones show only the backdrop, never a flash of the HUD.
+   Media query = PHONE_QUERY in src/lib/avatar/view-mode.ts. */
+@media (orientation: portrait) and (min-width: 360px) and (max-width: 480px) and (pointer: coarse) {
+  .view-pending {
+    visibility: hidden;
+  }
+  .view-pending-backdrop {
+    position: fixed;
+    inset: 0;
+    background: #dbc7c7;
+  }
+}
+
+.avatar-screen {
+  background: #dbc7c7;
+  color: #3b1f2b;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+.avatar-stage {
+  overflow: hidden;
+  /* Own stacking context: the videos' z-index must not lift them over the subtitle and buttons. */
+  isolation: isolate;
+}
+
+.avatar-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center bottom;
+  opacity: 0;
+  transform-origin: 50% 30%;
+  transition:
+    opacity 150ms linear,
+    transform 600ms ease;
+  pointer-events: none;
+}
+.avatar-video[data-front="true"] {
+  opacity: 1;
+  z-index: 1;
+}
+
+/* Listening: a slight push-in and a soft vignette. */
+.avatar-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 35%, transparent 45%, rgba(59, 31, 43, 0.28) 100%);
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.avatar-stage[data-focus="true"] .avatar-video {
+  transform: scale(1.04);
+}
+.avatar-stage[data-focus="true"] .avatar-vignette {
+  opacity: 1;
+}
+
+/* The last two lines of her reply; older lines scroll off the top and fade. */
+.avatar-subtitle {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-width: 26rem;
+  max-height: calc(2 * 1.5em + 1rem);
+  overflow: hidden;
+  padding: 0.5rem 0.9rem;
+  border-radius: 1rem;
+  background: rgba(35, 16, 26, 0.5);
+  color: #fff;
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 0.55rem);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 0.55rem);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 500ms ease,
+    transform 500ms ease;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.avatar-subtitle[data-visible="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.avatar-heard {
+  max-width: 22rem;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #5b2a40;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.avatar-fab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(35, 16, 26, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 6px 20px rgba(59, 31, 43, 0.25);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.avatar-fab:focus-visible {
+  outline: 2px solid #ff007f;
+  outline-offset: 3px;
+}
+.avatar-fab:disabled {
+  opacity: 0.5;
+}
+.avatar-fab-sm {
+  width: 3.25rem;
+  height: 3.25rem;
+}
+.avatar-fab-lg {
+  width: 5rem;
+  height: 5rem;
+  background: rgba(255, 0, 127, 0.78);
+}
+.avatar-fab-live {
+  transform: scale(1.1);
+  background: #ff007f;
+  box-shadow:
+    0 0 0 8px rgba(255, 0, 127, 0.22),
+    0 0 32px rgba(255, 0, 127, 0.55);
+  animation: avatar-mic-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes avatar-mic-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 6px rgba(255, 0, 127, 0.22),
+      0 0 24px rgba(255, 0, 127, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 14px rgba(255, 0, 127, 0.12),
+      0 0 40px rgba(255, 0, 127, 0.6);
+  }
+}
+
+/* Back to the avatar from the phone HUD: a round crop of her face. */
+.avatar-return {
+  width: 3.25rem;
+  height: 3.25rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid #ff007f;
+  background: #dbc7c7;
+  box-shadow: 0 0 16px rgba(255, 0, 127, 0.45);
+  overflow: hidden;
+}
+.avatar-return:focus-visible {
+  outline: 2px solid #fbcfe8;
+  outline-offset: 3px;
+}
+.avatar-return-face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-image: url("/avatar/idle.jpg");
+  background-size: 234px 416px;
+  background-position: -89px -12px;
+  background-repeat: no-repeat;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-stage[data-focus="true"] .avatar-video {
+    transform: none;
+  }
+}

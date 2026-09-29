@@ -1,0 +1,51 @@
+{
+  "idle": {
+    "src": "/avatar/idle.mp4",
+    "poster": "/avatar/idle.jpg",
+    "duration": 5,
+    "loop": true,
+    "placeholder": false
+  },
+  "greeting": {
+    "src": "/avatar/greeting.mp4",
+    "poster": "/avatar/greeting.jpg",
+    "duration": 5.167,
+    "loop": false,
+    "placeholder": false
+  },
+  "air_kiss": {
+    "src": "/avatar/air_kiss.mp4",
+    "poster": "/avatar/air_kiss.jpg",
+    "duration": 5.167,
+    "loop": false,
+    "placeholder": false
+  },
+  "talking": {
+    "src": "/avatar/talking.mp4",
+    "poster": "/avatar/talking.jpg",
+    "duration": 5.167,
+    "loop": true,
+    "placeholder": false
+  },
+  "concern": {
+    "src": "/avatar/concern.mp4",
+    "poster": "/avatar/concern.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false
+  },
+  "sadness": {
+    "src": "/avatar/sadness.mp4",
+    "poster": "/avatar/sadness.jpg",
+    "duration": 7.042,
+    "loop": false,
+    "placeholder": false
+  },
+  "nod": {
+    "src": "/avatar/nod.mp4",
+    "poster": "/avatar/nod.jpg",
+    "duration": 5.167,
+    "loop": false,
+    "placeholder": false
+  }
+}

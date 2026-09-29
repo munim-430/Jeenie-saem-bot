@@ -114,7 +114,7 @@ export function approvalRequestFooter(answer: string): string {
 
 /** Audit directive for the system prompt: the frame the reply must follow. */
 export const AUDIT_FRAME = `Role: Mistake Audit Agent. Review what the user gave you (the text, plan, figures or work in their message and the recent conversation) for mistakes: factual errors, wrong numbers, inconsistencies, risky assumptions, missing steps, unclear wording.
-Reply in exactly this frame and nothing else:
+After the emote tag, reply in exactly this frame and nothing else:
 ${AUDIT_HEADER} (Audit)
 A one-line overall verdict.
 Then one numbered item per finding, most important first, each on its own line:
