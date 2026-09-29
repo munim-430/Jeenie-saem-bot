@@ -6,6 +6,7 @@ import { CLIP_VERSION as INGEST_CLIP_VERSION, KLING_NAMES, ingestPlan } from "..
 import { oneShotDeadlineMs } from "@/hooks/useAvatarDirector";
 import klingClips from "../assets/avatar/kling/clips.json";
 import {
+  IDLE_SEQUENCE,
   INITIAL_DIRECTOR,
   baseStateOf,
   cueOf,
@@ -18,9 +19,6 @@ import {
 import {
   CHECK_IN_LINES,
   CHECK_IN_MS,
-  FIRST_VARIATION_MS,
-  VARIATION_MAX_MS,
-  VARIATION_MIN_MS,
   holdIdle,
   idleStep,
   pickCheckIn,
@@ -42,11 +40,13 @@ describe("avatar director", () => {
     expect(baseStateOf({ listening: false, speaking: false })).toBe("idle");
   });
 
-  it("plays a one-shot once, then returns to the base state", () => {
+  it("plays a one-shot once, then hands back to the base state", () => {
     const playing = run([{ type: "emote", emote: "greeting" }]);
     expect(cueOf(playing)).toMatchObject({ emote: "greeting", loop: false });
-    const done = run([{ type: "ended", seq: playing.seq }], playing);
-    expect(cueOf(done)).toMatchObject({ emote: "idle", loop: true });
+    // Idle's base is the idle sequence.
+    expect(cueOf(run([{ type: "ended", seq: playing.seq }], playing))).toMatchObject({ emote: "spin", loop: false });
+    const talking = run([{ type: "base", base: "talking" }, { type: "emote", emote: "nod" }]);
+    expect(cueOf(run([{ type: "ended", seq: talking.seq }], talking))).toMatchObject({ emote: "talking", loop: true });
   });
 
   it("hands a finished one-shot to talking while speech plays", () => {
@@ -73,7 +73,10 @@ describe("avatar director", () => {
   });
 
   it("restarts the clip for a repeat of the same emote", () => {
-    const first = run([{ type: "emote", emote: "nod" }]);
+    const first = run([
+      { type: "base", base: "talking" },
+      { type: "emote", emote: "nod" },
+    ]);
     const second = run(
       [
         { type: "ended", seq: first.seq },
@@ -114,12 +117,47 @@ describe("avatar director", () => {
     expect(run([{ type: "base", base: "idle" }], listening).playing).toBe("concern");
   });
 
-  it("idle variations never interrupt or queue", () => {
-    expect(run([{ type: "vary", emote: "sway" }]).playing).toBe("sway");
-    const busy = run([{ type: "emote", emote: "sadness" }]);
-    expect(run([{ type: "vary", emote: "sway" }], busy)).toBe(busy);
-    const talking = run([{ type: "base", base: "talking" }]);
-    expect(run([{ type: "vary", emote: "sway" }], talking)).toBe(talking);
+  it("idle sequence: plays spin, playful, shyness, heartbeat, sway back-to-back after the greeting", () => {
+    let state = run([{ type: "emote", emote: "greeting" }]);
+    const order: string[] = [];
+    for (let i = 0; i < IDLE_SEQUENCE.length + 1; i++) {
+      state = run([{ type: "ended", seq: state.seq }], state);
+      order.push(cueOf(state).emote);
+      expect(cueOf(state).loop).toBe(false);
+    }
+    expect(order).toEqual(["spin", "playful", "shyness", "heartbeat", "sway", "spin"]);
+  });
+
+  it("idle sequence gives way to talking at once and resumes at the next step", () => {
+    const greeted = run([{ type: "emote", emote: "greeting" }]);
+    const spinning = run([{ type: "ended", seq: greeted.seq }], greeted);
+    const talking = run([{ type: "base", base: "talking" }], spinning);
+    expect(cueOf(talking)).toMatchObject({ emote: "talking", loop: true });
+    expect(cueOf(run([{ type: "base", base: "idle" }], talking)).emote).toBe("playful");
+  });
+
+  it("idle sequence gives way to the mic", () => {
+    const greeted = run([{ type: "emote", emote: "greeting" }]);
+    const spinning = run([{ type: "ended", seq: greeted.seq }], greeted);
+    expect(cueOf(run([{ type: "base", base: "listening" }], spinning))).toMatchObject({ emote: "listening", key: "idle" });
+  });
+
+  it("a reply emote waits for the idle-sequence step, then the sequence carries on", () => {
+    const greeted = run([{ type: "emote", emote: "greeting" }]);
+    const spinning = run([{ type: "ended", seq: greeted.seq }, { type: "emote", emote: "love" }], greeted);
+    expect(spinning.playing).toBe("spin");
+    const love = run([{ type: "ended", seq: spinning.seq }], spinning);
+    expect(love).toMatchObject({ playing: "love", ambient: false });
+    expect(run([{ type: "ended", seq: love.seq }], love).playing).toBe("playful");
+  });
+
+  it("a reply emote with speech cuts the idle-sequence step at once", () => {
+    const greeted = run([{ type: "emote", emote: "greeting" }]);
+    const state = run(
+      [{ type: "ended", seq: greeted.seq }, { type: "emote", emote: "love" }, { type: "base", base: "talking" }],
+      greeted,
+    );
+    expect(state).toMatchObject({ base: "talking", playing: "love", queued: null, ambient: false });
   });
 });
 
@@ -285,31 +323,19 @@ describe("emote picker (QA)", () => {
 
 describe("idle watch", () => {
   const t0 = 1_000_000;
-  const mid = () => 0.5;
-
-  it("first variation after 30 s, then every 30–60 s", () => {
-    let state = resetIdle(t0);
-    expect(idleStep(state, t0 + FIRST_VARIATION_MS - 1).action).toBeNull();
-    const first = idleStep(state, t0 + FIRST_VARIATION_MS, mid);
-    expect(first.action).toBe("variation");
-    state = first.state;
-    const gap = state.nextVariationAt - (t0 + FIRST_VARIATION_MS);
-    expect(gap).toBeGreaterThanOrEqual(VARIATION_MIN_MS);
-    expect(gap).toBeLessThanOrEqual(VARIATION_MAX_MS);
-    expect(idleStep(state, t0 + FIRST_VARIATION_MS + 1).action).toBeNull();
-  });
 
   it("checks in once after ~3 min, until the user interacts", () => {
     let state = resetIdle(t0);
-    const checkIn = idleStep(state, t0 + CHECK_IN_MS, mid);
+    expect(idleStep(state, t0 + CHECK_IN_MS - 1).action).toBeNull();
+    const checkIn = idleStep(state, t0 + CHECK_IN_MS);
     expect(checkIn.action).toBe("check-in");
     state = checkIn.state;
     // Her own speech holds the silence but does not re-arm the check-in.
     state = holdIdle(state, t0 + CHECK_IN_MS + 5_000);
-    expect(idleStep(state, t0 + CHECK_IN_MS * 3, mid).action).toBe("variation");
+    expect(idleStep(state, t0 + CHECK_IN_MS * 3).action).toBeNull();
     // The user interacts: armed again.
     state = resetIdle(t0 + CHECK_IN_MS * 3);
-    expect(idleStep(state, t0 + CHECK_IN_MS * 4, mid).action).toBe("check-in");
+    expect(idleStep(state, t0 + CHECK_IN_MS * 4).action).toBe("check-in");
   });
 
   it("picks a Korean check-in line", () => {

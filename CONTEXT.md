@@ -7,11 +7,15 @@ contact, faint composed smile. Higgsfield media `ecc09fc0-847a-4ca4-b2eb-a1a4a08
 (= `assets/avatar/source/fullbody.png`). Immutable; see ADR 0001. Also written **N**.
 
 **Clip** — one pre-rendered 9:16 video of the avatar. Classes:
-- **loop** — gated as a loop (closes on itself): idle, sway, listening, speaking. The app loops idle,
-  listening and speaking (`talking` in code) while their state lasts, and plays one cycle of sway as the
-  idle variation.
+- **loop** — gated as a loop (closes on itself): idle, sway, listening, speaking. The app loops idle
+  (shown before the greeting and under listening) and speaking (`talking` in code) while their state
+  lasts, and plays one cycle of sway as a step of the idle sequence.
 - **one-shot** (N→N) — plays once and hands back to idle: every emote.
 - **entry** (—→N), **exit** (N→—), **variant-end** (N→N(B)): outfit_change, environment_change.
+
+**Idle sequence** — what she plays while idle, back-to-back and non-stop: spin → playful →
+shyness → heartbeat → sway, then again. Each step hands over on its last (NEUTRAL) frame. Talking or
+the mic drops the current step at once; a reply emote waits for the step to end.
 
 **Carrier** — the gross body motion that makes an emote read at phone size (lean, weight shift, nod,
 shoulders). Faces alone do not read under a double pin. A carrier must never bring a hand to the

@@ -10,7 +10,7 @@ import {
   clipNameFor,
   type ClipTable,
 } from "@/lib/avatar/clips";
-import { shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
+import { IDLE_SEQUENCE, shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
 import { INITIAL_GATE, atRest, gateStep, nextRest } from "@/lib/avatar/voice-gate";
 import { cn } from "@/lib/utils";
 
@@ -148,7 +148,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
   }, [talkingShown, voiceMeasured, voiceLevel, rests]);
 
   // Warm the HTTP / service-worker cache so later clips start instantly: the clips
-  // every state needs first, then the rest a couple at a time so a phone on mobile
+  // every state needs first, then the idle sequence and the rest a couple at a time so a phone on mobile
   // data is not asked for every file at once. A clip not warmed yet still streams.
   useEffect(() => {
     const controller = new AbortController();
@@ -161,7 +161,12 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
           () => undefined,
           () => undefined,
         );
-    const rest = CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name));
+    // The idle sequence plays right after the greeting, so its clips come first.
+    const sequence: readonly (typeof CLIP_NAMES)[number][] = IDLE_SEQUENCE;
+    const rest = [
+      ...sequence,
+      ...CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name) && !sequence.includes(name)),
+    ];
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
     };

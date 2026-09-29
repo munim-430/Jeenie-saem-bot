@@ -75,6 +75,22 @@ The owner still saw idle jump on the preview.
   35.2 dB.
 - **Tests:** 943 pass, including a new voice-gate suite.
 
+## Follow-up: idle is a non-stop sequence
+- **Owner's request:** while idle she plays spin → playful → shyness → heartbeat → sway back-to-back,
+  then again. One cycle is about 34 s. It starts right after the greeting. The 30–60 s sway variation
+  is gone; sway is now the fifth step.
+- **Talking or the mic** drops the current step at once. When she is idle again, the sequence resumes
+  at the next step.
+- **A reply emote without voice** waits for the current step to end (at most 8 s), so the cut stays
+  seamless.
+- **Measured in real Chrome, 50 s after load:**
+  - the order is correct, with no idle clip in between;
+  - every clip-to-clip join is 41.9–43.8 dB (invisible);
+  - there are 0 console errors;
+  - the voice test is unchanged.
+- **Known:** the legacy greeting's cuts in and out (35.1 dB) are unchanged and kept by the owner's choice.
+  They now hand over to spin instead of idle.
+
 ## Release steps for the owner
 1. Open the preview on your phone (you are signed in to Vercel).
 2. Tap **Emotes (QA)** and play every emote. Tap **voice test** to watch her mouth rest in the pauses.

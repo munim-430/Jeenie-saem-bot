@@ -26,7 +26,7 @@ export const REPLY_EMOTES = [
 
 export type ReplyEmote = (typeof REPLY_EMOTES)[number];
 
-/** Every clip the avatar can show: the app drives idle / listening / talking and the sway idle variation. */
+/** Every clip the avatar can show: the app drives idle / listening / talking and the idle sequence (sway is idle-only). */
 export const EMOTES = ["idle", "listening", "talking", "sway", ...REPLY_EMOTES] as const;
 
 export type Emote = (typeof EMOTES)[number];

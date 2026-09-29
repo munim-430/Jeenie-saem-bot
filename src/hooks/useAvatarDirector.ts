@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import { CLIP_MANIFEST_URL, DEFAULT_CLIPS, clipNameFor, mergeClipManifest, type ClipTable } from "@/lib/avatar/clips";
 import { INITIAL_DIRECTOR, baseStateOf, cueOf, directorReducer, type ClipCue } from "@/lib/avatar/director";
-import type { OneShotEmote, ReplyEmote } from "@/lib/emote";
+import type { ReplyEmote } from "@/lib/emote";
 
 // Grace on top of a one-shot's duration before we assume its `ended` event is lost
 // (stage unmounted, decode error, tab throttled) and hand back to the base state.
@@ -20,8 +20,6 @@ export interface AvatarDirector {
   clips: ClipTable;
   /** Reply / greeting / check-in emote: interrupts the loop, waits behind another one-shot. */
   play: (emote: ReplyEmote) => void;
-  /** Idle variation: dropped unless she is idle with nothing else to play. */
-  vary: (emote: OneShotEmote) => void;
   /** The stage finished the one-shot for `cue.key`. */
   ended: () => void;
 }
@@ -51,8 +49,7 @@ export function useAvatarDirector({ listening, speaking }: { listening: boolean;
   }, [playing, seq, clips]);
 
   const play = useCallback((emote: ReplyEmote) => dispatch({ type: "emote", emote }), []);
-  const vary = useCallback((emote: OneShotEmote) => dispatch({ type: "vary", emote }), []);
   const ended = useCallback(() => dispatch({ type: "ended", seq }), [seq]);
 
-  return { cue: cueOf(state), clips, play, vary, ended };
+  return { cue: cueOf(state), clips, play, ended };
 }

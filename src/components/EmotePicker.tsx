@@ -37,9 +37,6 @@ export function EmotePicker({ director, onVoiceTest, voiceTestRunning }: EmotePi
               {emote}
             </button>
           ))}
-          <button type="button" data-emote="sway" onClick={() => director.vary("sway")}>
-            sway (plays when idle)
-          </button>
           <button type="button" data-voice-test="" onClick={onVoiceTest} disabled={voiceTestRunning}>
             {voiceTestRunning ? "voice test…" : "voice test"}
           </button>

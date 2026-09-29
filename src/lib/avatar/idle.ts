@@ -1,23 +1,19 @@
-// Idle behaviour (spec § Idle behaviour): after 30 s of silence a subtle
-// variation, then one every 30–60 s; after ~3 min a single spoken check-in.
-// Her own speech counts as "not silent" but only the user re-arms the check-in.
+// Idle behaviour (spec § Idle behaviour): after ~3 min of silence a single spoken check-in.
+// (Her idle motion is the director's idle sequence.) Her own speech counts as "not silent"
+// but only the user re-arms the check-in.
 
-export const FIRST_VARIATION_MS = 30_000;
-export const VARIATION_MIN_MS = 30_000;
-export const VARIATION_MAX_MS = 60_000;
 export const CHECK_IN_MS = 180_000;
 
 export interface IdleState {
   quietSince: number;
-  nextVariationAt: number;
   checkedIn: boolean;
 }
 
-export type IdleAction = "variation" | "check-in" | null;
+export type IdleAction = "check-in" | null;
 
 /** Any user interaction: full reset, the check-in is armed again. */
 export function resetIdle(now: number): IdleState {
-  return { quietSince: now, nextVariationAt: now + FIRST_VARIATION_MS, checkedIn: false };
+  return { quietSince: now, checkedIn: false };
 }
 
 /** She is speaking / listening / thinking: silence restarts, but a done check-in stays done. */
@@ -25,19 +21,9 @@ export function holdIdle(state: IdleState, now: number): IdleState {
   return { ...resetIdle(now), checkedIn: state.checkedIn };
 }
 
-const variationDelay = (random: () => number) =>
-  VARIATION_MIN_MS + Math.floor(random() * (VARIATION_MAX_MS - VARIATION_MIN_MS));
-
-export function idleStep(
-  state: IdleState,
-  now: number,
-  random: () => number = Math.random,
-): { state: IdleState; action: IdleAction } {
+export function idleStep(state: IdleState, now: number): { state: IdleState; action: IdleAction } {
   if (!state.checkedIn && now - state.quietSince >= CHECK_IN_MS) {
-    return { state: { ...state, checkedIn: true, nextVariationAt: now + variationDelay(random) }, action: "check-in" };
-  }
-  if (now >= state.nextVariationAt) {
-    return { state: { ...state, nextVariationAt: now + variationDelay(random) }, action: "variation" };
+    return { state: { ...state, checkedIn: true }, action: "check-in" };
   }
   return { state, action: null };
 }
