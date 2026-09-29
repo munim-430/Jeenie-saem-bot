@@ -32,8 +32,8 @@ Also included:
 - **HUD:** a canvas arc-reactor orb, a spectrum analyzer, a translucent chat terminal, tactical telemetry, IoT control tiles, and a camera scanner.
 - **Telegram bridge:** two-way bot. Chat with Jeannie, send photos for analysis, run `/report`, `/search`, and `/status`.
 - **Language modes:** Auto-detect, English, Korean, or bilingual (English then Korean). You can also ask for "both languages" in any message.
-- **Honorifics:** every reply addresses you with one title, drawn at random: 부장님 60% of the time, 사장님 10%, sir 30%. Each reply is an independent draw, so the split holds over many replies rather than exactly per ten.
-- **Session greeting:** a new HUD session (and Telegram `/start`) opens with a Korean greeting for your local time of day (좋은 아침입니다 05–11, 좋은 오후입니다 12–17, 좋은 저녁입니다 18–21, 늦은 시간까지 수고 많으십니다 at night) plus an encouraging line. Set `JEANNIE_TIMEZONE` (default `Asia/Dhaka`).
+- **Honorifics:** replies call you 부장님 by default and 자기야 when the message is personal (tiredness, missing her, good night). Audit, Hangeul, search, vision and smart-home replies always use 부장님. Greetings use 부장님 from 09:00 to 18:00 local time and 자기야 otherwise.
+- **Session greeting:** a new HUD session opens with a short Korean greeting written by the model for your local time of day and how long you were away, with the template greeting (좋은 아침입니다 05–11, 좋은 오후입니다 12–17, 좋은 저녁입니다 18–21, 늦은 시간까지 수고 많으십니다 at night) as the fallback. Telegram `/start` uses the template greeting. Set `JEANNIE_TIMEZONE` (default `Asia/Dhaka`).
 - **Memory:** upload `.md` and `.jsonl` files from the HUD's Memory panel. Pinned notes (like your profile) are always in her prompt; the rest are recalled when a message matches them.
 
 ## Quick start

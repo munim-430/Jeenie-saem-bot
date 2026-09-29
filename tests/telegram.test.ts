@@ -251,7 +251,7 @@ describe("handleTelegramUpdate", () => {
     const tg = fakeTelegram();
     for (const text of ["/start", "/help", "/status", "/frobnicate"]) await handleTelegramUpdate(textUpdate(ADMIN, text));
     const [start, help, status, unknown] = tg.sent().map((p) => String(p.text));
-    expect(start).toMatch(/^(?:좋은 (?:아침|오후|저녁)입니다|늦은 시간까지 수고 많으십니다), (?:부장님|사장님|sir)\. /);
+    expect(start).toMatch(/^(?:좋은 (?:아침|오후|저녁)입니다|늦은 시간까지 수고 많으십니다), (?:부장님|자기야)\. /);
     expect(start).toContain("I'm Jeannie");
     expect(start).toContain("안녕하세요");
     expect(help).toContain("/report");

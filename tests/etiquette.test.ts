@@ -1,26 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ENCOURAGEMENTS,
-  HONORIFICS,
+  greetingHonorific,
   honorificDirective,
+  isPersonalMessage,
   koreanGreetingForHour,
   localClock,
   pickHonorific,
   pickWeighted,
   sessionGreeting,
 } from "@/lib/agents/etiquette";
-
-/** Deterministic PRNG (mulberry32) for the distribution check. */
-function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 describe("pickWeighted", () => {
   it("lays the options out on a cumulative scale", () => {
@@ -57,32 +46,49 @@ describe("pickWeighted", () => {
 });
 
 describe("honorifics", () => {
-  it("weights 부장님 60%, 사장님 10%, sir 30%", () => {
-    expect(HONORIFICS).toEqual([
-      { value: "부장님", weight: 0.6 },
-      { value: "사장님", weight: 0.1 },
-      { value: "sir", weight: 0.3 },
-    ]);
-    expect(pickHonorific(() => 0.3)).toBe("부장님");
-    expect(pickHonorific(() => 0.65)).toBe("사장님");
-    expect(pickHonorific(() => 0.95)).toBe("sir");
+  it.each([
+    "Draft the Q3 budget memo",
+    "What's on the agenda for the board meeting?",
+    "계약서 검토해 줘",
+    "Explain binary search in Python",
+  ])("uses 부장님 for work: %j", (text) => {
+    expect(pickHonorific({ text, agent: "core" })).toBe("부장님");
   });
 
-  it("produces the 60/10/30 split over many replies", () => {
-    const rng = seeded(42);
-    const counts = { 부장님: 0, 사장님: 0, sir: 0 };
-    const n = 10_000;
-    for (let i = 0; i < n; i++) counts[pickHonorific(rng)]++;
-    expect(counts.부장님 / n).toBeCloseTo(0.6, 1);
-    expect(Math.abs(counts.부장님 / n - 0.6)).toBeLessThan(0.02);
-    expect(Math.abs(counts.사장님 / n - 0.1)).toBeLessThan(0.02);
-    expect(Math.abs(counts.sir / n - 0.3)).toBeLessThan(0.02);
+  it.each([
+    "I'm so tired today",
+    "I missed you, Jeannie",
+    "good night!",
+    "오늘 너무 피곤해",
+    "보고 싶었어",
+    "자기야 뭐 해?",
+    "기분이 좀 우울해",
+  ])("uses 자기야 for personal moments: %j", (text) => {
+    expect(isPersonalMessage(text)).toBe(true);
+    expect(pickHonorific({ text, agent: "core" })).toBe("자기야");
   });
 
-  it("tells the model to use exactly that title", () => {
+  it("keeps specialist agents on 부장님 whatever the wording", () => {
+    for (const agent of ["audit", "hangeul", "search", "vision", "iot"] as const) {
+      expect(pickHonorific({ text: "I'm tired, check the portal", agent })).toBe("부장님");
+    }
+    expect(pickHonorific({ text: "I'm tired" })).toBe("자기야");
+  });
+
+  it("greets with 부장님 in office hours and 자기야 outside them", () => {
+    expect(greetingHonorific(8)).toBe("자기야");
+    expect(greetingHonorific(9)).toBe("부장님");
+    expect(greetingHonorific(17)).toBe("부장님");
+    expect(greetingHonorific(18)).toBe("자기야");
+    expect(greetingHonorific(0)).toBe("자기야");
+  });
+
+  it("tells the model to use exactly that title, and when each applies", () => {
     expect(honorificDirective("부장님")).toContain('"부장님"');
-    expect(honorificDirective("sir")).toContain("Understood, sir.");
-    expect(honorificDirective("사장님")).toMatch(/Do not use any other title/);
+    expect(honorificDirective("부장님")).toMatch(/work or business/);
+    expect(honorificDirective("자기야")).toContain('"네, 자기야."');
+    expect(honorificDirective("자기야")).toMatch(/affectionate, personal/);
+    expect(honorificDirective("자기야")).toMatch(/use only "자기야" and no other title/);
   });
 });
 
@@ -120,11 +126,13 @@ describe("Korean session greeting", () => {
     });
   });
 
-  it("draws the honorific with the same weighting when none is given", () => {
+  it("picks the title from the local hour when none is given", () => {
     const morning = new Date("2026-09-28T01:00:00Z"); // 07:00 in Dhaka
     const result = sessionGreeting({ now: morning, timeZone: "Asia/Dhaka", rng: () => 0.95 });
-    expect(result.honorific).toBe("sir");
-    expect(result.greeting.startsWith("좋은 아침입니다, sir. ")).toBe(true);
-    expect(ENCOURAGEMENTS).toContain(result.greeting.split("sir. ")[1]);
+    expect(result.honorific).toBe("자기야");
+    expect(result.greeting.startsWith("좋은 아침입니다, 자기야. ")).toBe(true);
+    expect(ENCOURAGEMENTS).toContain(result.greeting.split("자기야. ")[1]);
+    const noon = new Date("2026-09-28T06:00:00Z"); // 12:00 in Dhaka
+    expect(sessionGreeting({ now: noon, timeZone: "Asia/Dhaka" }).honorific).toBe("부장님");
   });
 });

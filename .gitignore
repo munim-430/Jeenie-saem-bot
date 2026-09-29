@@ -30,3 +30,6 @@ npm-debug.log*
 
 # personal notes kept locally for `npm run memory:upload` (they live in Supabase, not git)
 /memory/
+
+# avatar clip pipeline scratch (npm run avatar:clips)
+/scripts/avatar-clips/.work/

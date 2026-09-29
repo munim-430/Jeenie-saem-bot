@@ -1,9 +1,9 @@
 // Etiquette: how Jeannie addresses her operator, and how she opens a session.
-// Deterministic helpers (the random source is injectable) so the weighting and
-// the time-of-day greeting are unit-tested rather than left to the model.
+// Deterministic helpers (the random source is injectable) so the choice of
+// title and the time-of-day greeting are unit-tested rather than left to the model.
 // Runs on Edge and Node.js.
 
-import type { Honorific } from "../types";
+import type { AgentId, Honorific } from "../types";
 
 export interface Weighted<T> {
   value: T;
@@ -37,21 +37,48 @@ export function pickWeighted<T>(options: readonly Weighted<T>[], rng: () => numb
   return options.findLast((o) => o.weight > 0)!.value;
 }
 
-/** 60% 부장님, 10% 사장님, 30% sir. */
-export const HONORIFICS: readonly Weighted<Honorific>[] = [
-  { value: "부장님", weight: 0.6 },
-  { value: "사장님", weight: 0.1 },
-  { value: "sir", weight: 0.3 },
+// ─── Address ────────────────────────────────────────────────────────────────
+// 부장님 for work and business, 자기야 for affectionate or personal moments.
+// The specialist agents are always work; the core agent reads the message.
+
+const WORK_AGENTS: ReadonlySet<AgentId> = new Set(["audit", "hangeul", "search", "vision", "iot"]);
+
+/** Feelings, affection, rest and private life: the cues for 자기야. */
+const PERSONAL_CUES = [
+  /\b(?:love|loves|loving|miss(?:ed)? you|babe|baby|honey|darling|sweet(?:ie|heart)|cute|beautiful|pretty|hug|kiss|cuddle)\b/i,
+  /\b(?:tired|exhausted|sleepy|sad|lonely|upset|stressed|anxious|depressed|bored|hungry|sick|unwell)\b/i,
+  /\b(?:good ?night|sleep well|sweet dreams|i(?:'m| am) (?:home|back)|how are you|how was your day|my day|i feel|i'm feeling|my mood)\b/i,
+  /자기|사랑|보고\s*싶|그리워|안아|뽀뽀|귀여|예뻐|좋아해/,
+  /힘들|피곤|지쳐|졸려|우울|외로|슬퍼|속상|심심|배고파|아파|기분|스트레스/,
+  /잘\s*자|잘\s*잤|굿\s*나잇|보고\s*왔|다녀왔|쉬고\s*싶|오늘\s*하루/,
 ];
 
-export function pickHonorific(rng: () => number = Math.random): Honorific {
-  return pickWeighted(HONORIFICS, rng);
+export function isPersonalMessage(text: string): boolean {
+  return PERSONAL_CUES.some((cue) => cue.test(text));
+}
+
+/**
+ * The title for one reply: 부장님 for work (every specialist agent, and core
+ * requests with no personal cue), 자기야 when the user's message is about
+ * feelings, affection, rest or private life.
+ */
+export function pickHonorific(context: { text: string; agent?: AgentId }): Honorific {
+  if (context.agent && WORK_AGENTS.has(context.agent)) return "부장님";
+  return isPersonalMessage(context.text) ? "자기야" : "부장님";
+}
+
+/** Session openers: 부장님 during office hours (09:00-18:00 local), 자기야 before and after. */
+export function greetingHonorific(hour: number): Honorific {
+  return hour >= 9 && hour < 18 ? "부장님" : "자기야";
 }
 
 /** System-prompt line that pins the title for one reply. */
 export function honorificDirective(honorific: Honorific): string {
-  const example = honorific === "sir" ? "\"Understood, sir.\" / \"네, sir.\"" : `"네, ${honorific}." / "Understood, ${honorific}."`;
-  return `Address the user as "${honorific}" in this reply (for example ${example}). Use it once or twice, naturally, in whichever language you answer in. Do not use any other title or honorific for the user.`;
+  const when =
+    honorific === "부장님"
+      ? "This is a work or business moment, so be the poised, capable assistant."
+      : "This is an affectionate, personal moment, so let your warmth show.";
+  return `Address the user as "${honorific}" in this reply (for example "네, ${honorific}." / "Of course, ${honorific}."). ${when} Use it once or twice, naturally, in whichever language you answer in; keep the Korean word even in English. The two titles are 부장님 for work/business and 자기야 for affectionate/personal moments; in this reply use only "${honorific}" and no other title or honorific.`;
 }
 
 // ─── Session greeting ───────────────────────────────────────────────────────
@@ -100,8 +127,8 @@ export function sessionGreeting(options: GreetingOptions): {
   timeZone: string;
 } {
   const rng = options.rng ?? Math.random;
-  const honorific = options.honorific ?? pickHonorific(rng);
   const { hour, time } = localClock(options.now ?? new Date(), options.timeZone);
+  const honorific = options.honorific ?? greetingHonorific(hour);
   const index = Math.min(Math.floor(rng() * ENCOURAGEMENTS.length), ENCOURAGEMENTS.length - 1);
   const greeting = `${koreanGreetingForHour(hour)}, ${honorific}. ${ENCOURAGEMENTS[index]}`;
   return { greeting, honorific, localTime: time, timeZone: options.timeZone };

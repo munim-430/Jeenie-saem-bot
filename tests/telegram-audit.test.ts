@@ -30,7 +30,7 @@ vi.mock("@/lib/agents/orchestrator", async (importOriginal) => {
     runOrchestratorToText: vi.fn(async (input: OrchestratorInput, ctx: OrchestratorContext) => {
       orchestrated.push({ input, ctx });
       if (input.messages.length === 2) ctx.onAuditDecision?.("approved", ["Fix row 4"]);
-      return { ...reply, lang: "en", provider: "deepseek", honorific: "sir", sources: [] };
+      return { ...reply, lang: "en", provider: "deepseek", honorific: "부장님", sources: [] };
     }),
   };
 });
@@ -85,5 +85,15 @@ describe("Telegram audit approval", () => {
     await handleTelegramUpdate(update("What's the weather like?"));
     expect(orchestrated[0].input.messages).toHaveLength(1);
     expect(store.saved).toEqual([null]);
+  });
+
+  it("strips the avatar's emote tag before sending and before saving the audit", async () => {
+    const audit = `■ 점검 결과 (Audit)\n1. Fix row 4\n${APPROVAL_REQUEST_LINE}`;
+    reply = { agent: "audit", text: `[emote:concern] ${audit}` };
+    await handleTelegramUpdate(update("check my mistakes: 3 x 4 = 13"));
+    expect(store.saved).toEqual([audit]);
+    const calls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/sendMessage"));
+    const sent = calls.map(([, init]) => (JSON.parse(String(init?.body)) as { text: string }).text);
+    expect(sent).toEqual([audit]);
   });
 });

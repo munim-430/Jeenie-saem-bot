@@ -1,7 +1,8 @@
 // Orchestrator (Jeannie Core): routes each message to one specialist agent and
 // returns its answer as a byte stream plus the metadata the HUD shows in
 // headers. Routing order: pending audit approval → IoT → audit → Hangeul →
-// vision → live search → core. Every reply gets one weighted honorific, and the
+// vision → live search → core. Every reply gets one title (부장님 for work,
+// 자기야 for personal moments) and opens with an emote tag, and the
 // LLM agents get the recalled Supabase memory in their system prompt.
 // The returned stream never errors: provider failures become a short line in
 // the user's language. Runs on Edge and Node.js.
@@ -36,7 +37,6 @@ import { getLanguageModel, supportsTools, type ResolvedModel } from "./llm";
 import { buildSystemPrompt } from "./persona";
 import {
   contextualSearchQuery,
-  createSearchTool,
   formatSearchBriefing,
   isFollowUp,
   isSearchFollowUp,
@@ -45,6 +45,8 @@ import {
   webSearch,
   withTimeout,
 } from "./search-agent";
+import { isClockQuery } from "./time-tools";
+import { createCoreTools } from "./tools";
 import { toModelMessages } from "./vision-agent";
 
 const HISTORY_LIMIT = 20;
@@ -52,7 +54,7 @@ const HISTORY_LIMIT = 20;
 // drop results that do not fit instead of forcing citations.
 const SEARCH_RELEVANCE_NOTE =
   "If these results are not relevant to the user's latest message, ignore them and answer naturally without citations.";
-const MAX_TOOL_STEPS = 3;
+const MAX_TOOL_STEPS = 4; // e.g. webSearch → readUrl → answer, with one step to spare
 const MAX_SOURCES = 5;
 // Edge responses must start within 25 s, and the search runs before the first
 // byte, so the query rewrite and the provider chain share one budget.
@@ -98,6 +100,8 @@ export function routeQuery(input: {
     return { agent: "hangeul", lang, reason: "Hangeul admin portal request" };
   }
   if (input.hasImage) return { agent: "vision", lang, reason: "image attached" };
+  // The core agent's time tools answer these exactly; a web search would not.
+  if (isClockQuery(input.text)) return { agent: "core", lang, reason: "time or time-zone question" };
   if (needsLiveSearch(input.text)) return { agent: "search", lang, reason: "time-sensitive or verifiable facts" };
   if (isSearchFollowUp(input.text, previous)) return { agent: "search", lang, reason: "follow-up to a live search" };
   return { agent: "core", lang, reason: "general request" };
@@ -343,7 +347,7 @@ export interface OrchestratorContext {
   model?: LanguageModel;
   /** Provider label for `model`; defaults to the configured provider, else "openai". */
   provider?: Exclude<LlmProvider, "none">;
-  /** Fixes the honorific instead of drawing one (tests, callers that already greeted). */
+  /** Fixes the honorific instead of choosing one from the message (tests, callers that already greeted). */
   honorific?: Honorific;
   /** Memory lookup override (tests); defaults to Supabase recall. */
   recall?: (query: string, signal?: AbortSignal | null) => Promise<string>;
@@ -520,7 +524,8 @@ async function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Pr
   if (options.searchFailed) {
     context = "Live web search returned nothing for this message. Answer from your own knowledge and say briefly that live data was unavailable.";
   } else if (!useTools) {
-    context = "The webSearch tool is not available with this model. If an answer needs live data, say so briefly.";
+    context =
+      "No tools (webSearch, readUrl, currentTime, convertTime) are available with this model. If an answer needs live data or a web page, say so briefly; work out times from the current UTC time above.";
   }
 
   const memory = await turn.memory;
@@ -530,7 +535,7 @@ async function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Pr
     messages: toModelMessages(turn.history, { lang: turn.lang }),
     lang: turn.lang,
     signal: turn.ctx.signal,
-    tools: useTools ? { webSearch: createSearchTool((sources) => found.push(...sources)) } : undefined,
+    tools: useTools ? createCoreTools((sources) => found.push(...sources)) : undefined,
     footer: (answer) => sourcesFooter(found, answer, turn.lang),
   });
   return { agent: "core", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
@@ -594,14 +599,14 @@ export async function runOrchestrator(input: OrchestratorInput, ctx: Orchestrato
   const last = history.at(-1);
   const text = last?.role === "user" ? last.content : "";
   const image = input.image ?? (last?.role === "user" ? last.image : null) ?? null;
-  const honorific = ctx.honorific ?? pickHonorific();
 
   if (!image) {
-    const decided = answerPendingAudit(history, text, input, honorific, ctx);
+    const decided = answerPendingAudit(history, text, input, ctx.honorific ?? "부장님", ctx);
     if (decided) return decided;
   }
 
   const route = routeQuery({ text, hasImage: Boolean(image), lang: input.lang, previous: earlierUserTexts(history) });
+  const honorific = ctx.honorific ?? pickHonorific({ text, agent: route.agent });
 
   if (route.agent === "iot") {
     // Hard rule: fixed sentence, no network, no LLM.

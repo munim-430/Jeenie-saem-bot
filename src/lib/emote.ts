@@ -21,18 +21,26 @@ export function isReplyEmote(value: unknown): value is ReplyEmote {
   return typeof value === "string" && (REPLY_EMOTES as readonly string[]).includes(value);
 }
 
-const LEADING_TAG = /^\s*\[emote:([a-z_]+)\]\s*/i;
-const ANY_TAG = /\[emote:[a-z_]*\]?\s*/gi;
+// Tolerant of what models actually write: `[emote: nod]`, `[Emote:air-kiss]`, `[emote:air kiss]`.
+const LEADING_TAG = /^\s*\[\s*emote\s*:\s*([a-z_ -]*?)\s*\]\s*/i;
+// A whole tag anywhere, or an unterminated one at the very end (still streaming in).
+const ANY_TAG = /\[\s*emote\s*:[^\]\n]{0,24}(?:\]|$)\s*/gi;
+
+const normalizeName = (name: string) => name.trim().toLowerCase().replace(/[\s-]+/g, "_");
 
 /**
  * Split a (possibly still streaming) reply into its emote and display text.
  * `pending` is true while the text could still be the start of a tag, so the
- * caller can hold back rendering the first few characters.
+ * caller can hold back rendering the first few characters. Pass `final` once
+ * the text is complete: nothing is held back then.
  */
-export function parseEmote(text: string): { emote: ReplyEmote | null; text: string; pending: boolean } {
+export function parseEmote(
+  text: string,
+  options: { final?: boolean } = {},
+): { emote: ReplyEmote | null; text: string; pending: boolean } {
   const match = LEADING_TAG.exec(text);
   if (match) {
-    const name = match[1]!.toLowerCase();
+    const name = normalizeName(match[1]!);
     return {
       emote: isReplyEmote(name) ? name : null,
       text: text.slice(match[0].length).replace(ANY_TAG, ""),
@@ -40,13 +48,14 @@ export function parseEmote(text: string): { emote: ReplyEmote | null; text: stri
     };
   }
   const head = text.trimStart();
-  const pending = head.length < 20 && "[emote:".startsWith(head.slice(0, 7).toLowerCase()) && !head.includes("]");
+  const compact = head.replace(/\s+/g, "").slice(0, 7).toLowerCase();
+  const pending = !options.final && head.length < 32 && "[emote:".startsWith(compact) && !head.includes("]");
   return { emote: null, text: pending ? "" : text.replace(ANY_TAG, ""), pending };
 }
 
 /** Remove every emote tag from finished text (for TTS, Telegram, memory). */
 export function stripEmotes(text: string): string {
-  return parseEmote(text).text;
+  return parseEmote(text, { final: true }).text;
 }
 
 /** System-prompt line teaching the model the protocol. */

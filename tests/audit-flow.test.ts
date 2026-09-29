@@ -97,17 +97,17 @@ describe("recommendations and confirmations", () => {
   it("confirms execution with the honorific and the approved items", () => {
     const ko = executionConfirmation("ko", "부장님", ["Fix row 4"]);
     expect(ko).toBe("네, 부장님. 승인하신 권장 조치를 진행하겠습니다. 완료되면 보고드리겠습니다.\n\n승인된 항목:\n1. Fix row 4");
-    const en = executionConfirmation("en", "sir", []);
-    expect(en).toBe("Understood, sir. Proceeding with the approved recommendations. I'll report back when they're done.");
-    const both = executionConfirmation("bilingual", "사장님", ["A"]);
-    expect(both).toContain("Understood, 사장님.");
-    expect(both).toContain("네, 사장님.");
+    const en = executionConfirmation("en", "자기야", []);
+    expect(en).toBe("Understood, 자기야. Proceeding with the approved recommendations. I'll report back when they're done.");
+    const both = executionConfirmation("bilingual", "자기야", ["A"]);
+    expect(both).toContain("Understood, 자기야.");
+    expect(both).toContain("네, 자기야.");
     expect(both).toContain("Approved items / 승인된 항목:\n1. A");
   });
 
   it("acknowledges a rejection", () => {
     expect(rejectionAcknowledgement("ko", "부장님")).toContain("알겠습니다, 부장님. 권장 조치는 보류하겠습니다.");
-    expect(rejectionAcknowledgement("en", "sir")).toContain("Understood, sir. I've put the recommendations on hold.");
+    expect(rejectionAcknowledgement("en", "자기야")).toContain("Understood, 자기야. I've put the recommendations on hold.");
   });
 
   it("adds the approval request only to framed audits that forgot it", () => {

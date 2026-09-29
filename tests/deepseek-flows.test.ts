@@ -12,6 +12,7 @@ import { APPROVAL_MARKER, APPROVAL_REQUEST_LINE } from "@/lib/agents/audit-flow"
 import { getLanguageModel, supportsTools } from "@/lib/agents/llm";
 import { runOrchestratorToText } from "@/lib/agents/orchestrator";
 import { resetSearchState } from "@/lib/agents/search-agent";
+import { EMOTE_DIRECTIVE } from "@/lib/emote";
 import { getEnv } from "@/lib/env";
 import type { ChatMessage, SessionGreeting, SystemStatus } from "@/lib/types";
 
@@ -64,6 +65,7 @@ const ENV = [
   "ELEVENLABS_API_KEY",
   "ELEVENLABS_VOICE_ID",
   "VERCEL",
+  "MOCK_MODE",
 ];
 
 beforeEach(() => {
@@ -175,11 +177,21 @@ describe("honorific on every reply", () => {
     expect(systemPrompt(model)).toContain('Address the user as "부장님" in this reply');
   });
 
-  it("draws one when the caller does not fix it", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(0.65);
-    const model = mockModel("ok");
-    const result = await runOrchestratorToText({ messages: [user("hello")] }, { trusted: false, model });
-    expect(result.honorific).toBe("사장님");
+  it("chooses one from the message when the caller does not fix it", async () => {
+    const work = mockModel("ok");
+    expect((await runOrchestratorToText({ messages: [user("Draft the budget memo")] }, { trusted: false, model: work })).honorific).toBe("부장님");
+    const personal = mockModel("ok");
+    const result = await runOrchestratorToText({ messages: [user("오늘 너무 피곤해")] }, { trusted: false, model: personal });
+    expect(result.honorific).toBe("자기야");
+    expect(systemPrompt(personal)).toContain('Address the user as "자기야" in this reply');
+  });
+
+  it("ends every system prompt with the emote protocol", async () => {
+    const model = mockModel("[emote:nod] 네, 부장님.");
+    const result = await runOrchestratorToText({ messages: [user("hello")] }, { trusted: false, model, honorific: "부장님" });
+    expect(systemPrompt(model).trimEnd().endsWith(EMOTE_DIRECTIVE)).toBe(true);
+    // The chat stream keeps the tag; the client parses it.
+    expect(result.text).toBe("[emote:nod] 네, 부장님.");
   });
 
   it("travels URI-encoded in the chat response header", async () => {
@@ -200,20 +212,20 @@ describe("memory in the prompt", () => {
   it("adds recalled notes for trusted callers only", async () => {
     const recall = vi.fn(async () => "Your memory: HGLC is at Green Landmark, Kalabagan.");
     const trustedModel = mockModel("HGLC is at Green Landmark.");
-    await runOrchestratorToText({ messages: [user("Where is HGLC?")] }, { trusted: true, model: trustedModel, honorific: "sir", recall });
+    await runOrchestratorToText({ messages: [user("Where is HGLC?")] }, { trusted: true, model: trustedModel, honorific: "자기야", recall });
     expect(recall).toHaveBeenCalledWith("Where is HGLC?", undefined);
     expect(systemPrompt(trustedModel)).toContain("HGLC is at Green Landmark, Kalabagan.");
 
     recall.mockClear();
     const openModel = mockModel("I don't know.");
-    await runOrchestratorToText({ messages: [user("Where is HGLC?")] }, { trusted: false, model: openModel, honorific: "sir", recall });
+    await runOrchestratorToText({ messages: [user("Where is HGLC?")] }, { trusted: false, model: openModel, honorific: "자기야", recall });
     expect(recall).not.toHaveBeenCalled();
     expect(systemPrompt(openModel)).not.toContain("Green Landmark");
   });
 
   it("never looks up memory for IoT commands", async () => {
     const recall = vi.fn(async () => "notes");
-    const result = await runOrchestratorToText({ messages: [user("turn on the lights")] }, { trusted: true, recall, honorific: "sir" });
+    const result = await runOrchestratorToText({ messages: [user("turn on the lights")] }, { trusted: true, recall, honorific: "자기야" });
     expect(result.agent).toBe("iot");
     expect(recall).not.toHaveBeenCalled();
   });
@@ -223,7 +235,7 @@ describe("memory in the prompt", () => {
     const recall = vi.fn(async () => {
       throw new Error("supabase down");
     });
-    const result = await runOrchestratorToText({ messages: [user("hello")] }, { trusted: true, model, honorific: "sir", recall });
+    const result = await runOrchestratorToText({ messages: [user("hello")] }, { trusted: true, model, honorific: "자기야", recall });
     expect(result.text).toBe("Hello.");
   });
 });
@@ -265,20 +277,20 @@ describe("audit → approval flow", () => {
     const onAuditDecision = vi.fn();
     const result = await runOrchestratorToText(
       { messages: [user("check my mistakes"), assistant(`${AUDIT_REPLY}\n${APPROVAL_MARKER}: ...`), user("cancel")] },
-      { trusted: false, honorific: "sir", onAuditDecision },
+      { trusted: false, honorific: "자기야", onAuditDecision },
     );
-    expect(result.text).toContain("Understood, sir. I've put the recommendations on hold.");
+    expect(result.text).toContain("Understood, 자기야. I've put the recommendations on hold.");
     expect(onAuditDecision).toHaveBeenCalledWith("rejected", expect.any(Array));
   });
 
   it("treats an approval with nothing pending as a normal message", async () => {
     const model = mockModel("Approve what, sir?");
-    const result = await runOrchestratorToText({ messages: [user("hi"), assistant("Hello."), user("approve")] }, { trusted: false, model, honorific: "sir" });
+    const result = await runOrchestratorToText({ messages: [user("hi"), assistant("Hello."), user("approve")] }, { trusted: false, model, honorific: "자기야" });
     expect(result).toMatchObject({ agent: "core", text: "Approve what, sir?" });
   });
 
   it("explains that an audit needs a model when none is connected", async () => {
-    const result = await runOrchestratorToText({ messages: [user("실수 점검해줘: 3 x 4 = 13")] }, { trusted: false, honorific: "sir" });
+    const result = await runOrchestratorToText({ messages: [user("실수 점검해줘: 3 x 4 = 13")] }, { trusted: false, honorific: "자기야" });
     expect(result).toMatchObject({ agent: "offline", lang: "ko" });
     expect(result.text).toContain("DEEPSEEK_API_KEY");
   });
@@ -287,28 +299,73 @@ describe("audit → approval flow", () => {
 // ─── /api/session ───────────────────────────────────────────────────────────
 
 describe("GET /api/session", () => {
-  it("greets in Korean for the operator's local time", async () => {
+  function deepseekReply(content: string, prompts: string[]) {
+    return async (_input: RequestInfo | URL, init?: RequestInit) => {
+      prompts.push(String(init?.body ?? ""));
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 0,
+          model: "deepseek-chat",
+          choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+  }
+
+  it("falls back to the template greeting for the operator's local time without a model", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-28T01:30:00Z")); // 07:30 in Dhaka
+    vi.setSystemTime(new Date("2026-09-28T03:30:00Z")); // 09:30 in Dhaka
     vi.spyOn(Math, "random").mockReturnValue(0);
     try {
-      const res = sessionGet(new Request("http://localhost/api/session"));
+      const res = await sessionGet(new Request("http://localhost/api/session?awayMs=7200000"));
       const body = (await res.json()) as SessionGreeting;
-      expect(body).toMatchObject({ honorific: "부장님", localTime: "07:30", timeZone: "Asia/Dhaka" });
+      expect(body).toMatchObject({ honorific: "부장님", localTime: "09:30", timeZone: "Asia/Dhaka", source: "template" });
       expect(body.greeting.startsWith("좋은 아침입니다, 부장님. ")).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
 
+  it("asks the model for a Korean greeting with the time away, and strips a stray emote tag", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    const prompts: string[] = [];
+    vi.stubGlobal("fetch", deepseekReply("[emote:greeting] 좋은 저녁이에요, 자기야. 세 시간 동안 보고 싶었어요.", prompts));
+    const res = await sessionGet(new Request("http://localhost/api/session?awayMs=10800000"));
+    const body = (await res.json()) as SessionGreeting;
+    expect(body).toMatchObject({ source: "ai", greeting: "좋은 저녁이에요, 자기야. 세 시간 동안 보고 싶었어요.", honorific: "자기야" });
+    expect(prompts[0]).toContain("away for 약 3시간");
+  });
+
+  it("uses the template when the model answers with something unusable", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    vi.stubGlobal("fetch", deepseekReply("Good evening!", []));
+    const body = (await (await sessionGet(new Request("http://localhost/api/session"))).json()) as SessionGreeting;
+    expect(body.source).toBe("template");
+  });
+
+  it("uses the template in MOCK_MODE", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    vi.stubEnv("MOCK_MODE", "true");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const body = (await (await sessionGet(new Request("http://localhost/api/session"))).json()) as SessionGreeting;
+    expect(body.source).toBe("template");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses JEANNIE_TIMEZONE, ignores an invalid one, and needs the access key when set", async () => {
+    const zone = async () => ((await (await sessionGet(new Request("http://localhost/api/session"))).json()) as SessionGreeting).timeZone;
     vi.stubEnv("JEANNIE_TIMEZONE", "Asia/Seoul");
-    expect(((await sessionGet(new Request("http://localhost/api/session")).json()) as SessionGreeting).timeZone).toBe("Asia/Seoul");
+    expect(await zone()).toBe("Asia/Seoul");
     vi.stubEnv("JEANNIE_TIMEZONE", "Mars/Olympus");
-    expect(((await sessionGet(new Request("http://localhost/api/session")).json()) as SessionGreeting).timeZone).toBe("Asia/Dhaka");
+    expect(await zone()).toBe("Asia/Dhaka");
     vi.stubEnv("JEANNIE_ACCESS_KEY", "key-123");
-    expect(sessionGet(new Request("http://localhost/api/session")).status).toBe(401);
-    expect(sessionGet(new Request("http://localhost/api/session", { headers: { "x-jeannie-key": "key-123" } })).status).toBe(200);
+    expect((await sessionGet(new Request("http://localhost/api/session"))).status).toBe(401);
+    expect((await sessionGet(new Request("http://localhost/api/session", { headers: { "x-jeannie-key": "key-123" } }))).status).toBe(200);
   });
 });
 

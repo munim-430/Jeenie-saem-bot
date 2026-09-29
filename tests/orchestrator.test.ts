@@ -188,12 +188,12 @@ describe("IoT interceptor path", () => {
     vi.stubGlobal("fetch", fetchMock);
     const model = mockModel(textParts("should not be used"));
 
-    const result = await runOrchestratorToText({ messages: [user(text)], lang }, { trusted: true, model, honorific: "sir" });
+    const result = await runOrchestratorToText({ messages: [user(text)], lang }, { trusted: true, model, honorific: "자기야" });
     expect(result).toEqual({
       agent: "iot",
       lang: expected === "Yes, it is done." ? "en" : "ko",
       provider: "none",
-      honorific: "sir",
+      honorific: "자기야",
       sources: [],
       text: expected,
     });
@@ -415,7 +415,7 @@ describe("core agent", () => {
 
     const call = model.doStreamCalls[0];
     expect(call.prompt.filter((m) => m.role !== "system")).toHaveLength(20);
-    expect(call.tools?.map((t) => t.name)).toEqual(["webSearch"]);
+    expect(call.tools?.map((t) => t.name)).toEqual(["webSearch", "readUrl", "currentTime", "convertTime"]);
     expect(systemPrompt(model)).toContain("General Cognitive Agent");
   });
 
@@ -456,8 +456,8 @@ describe("core agent", () => {
       }),
     });
     const result = await runOrchestratorToText({ messages: [user("Tell me about Seoul")] }, { trusted: false, model });
-    expect(model.doStreamCalls.map((c) => c.toolChoice?.type)).toEqual(["auto", "auto", "none"]);
-    expect(model.doStreamCalls[2].tools?.map((t) => t.name)).toEqual(["webSearch"]);
+    expect(model.doStreamCalls.map((c) => c.toolChoice?.type)).toEqual(["auto", "auto", "auto", "none"]);
+    expect(model.doStreamCalls[3].tools?.map((t) => t.name)).toEqual(["webSearch", "readUrl", "currentTime", "convertTime"]);
     expect(result.text.startsWith("Seoul is the capital.\n\nSources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul")).toBe(true);
   });
 
@@ -648,7 +648,7 @@ describe("real provider over a local OpenAI-compatible server", () => {
     expect(captured).toHaveLength(2);
     expect(captured[0].authorization).toBe("Bearer sk-local-test");
     expect(captured[0].body.model).toBe("gpt-4o");
-    expect(captured[0].body.tools?.map((t) => t.function.name)).toEqual(["webSearch"]);
+    expect(captured[0].body.tools?.map((t) => t.function.name)).toEqual(["webSearch", "readUrl", "currentTime", "convertTime"]);
     expect(captured[1].body.messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool"]);
     expect(result.text).toContain("Seoul is the capital [1].");
     expect(result.text).toContain("Sources:\n[1] Seoul — https://en.wikipedia.org/wiki/Seoul");

@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "memory:upload": "node scripts/upload-memory.mjs"
+    "memory:upload": "node scripts/upload-memory.mjs",
+    "avatar:clips": "node scripts/avatar-clips/build.mjs"
   },
   "engines": {
     "node": "22.x"

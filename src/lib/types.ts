@@ -45,12 +45,12 @@ export const CHAT_HEADERS = {
   lang: "x-jeannie-lang",
   provider: "x-jeannie-provider",
   sources: "x-jeannie-sources",
-  /** How Jeannie addressed the user in this reply (URI-encoded: 부장님 / 사장님 / sir). */
+  /** How Jeannie addressed the user in this reply (URI-encoded: 부장님 / 자기야). */
   honorific: "x-jeannie-honorific",
 } as const;
 
-/** How Jeannie addresses the user. */
-export type Honorific = "부장님" | "사장님" | "sir";
+/** How Jeannie addresses the user: 부장님 in work/business context, 자기야 in affectionate/personal moments. */
+export type Honorific = "부장님" | "자기야";
 
 /** Header carrying the access key from the HUD (alternatively `Authorization: Bearer`). */
 export const ACCESS_KEY_HEADER = "x-jeannie-key";
@@ -148,6 +148,8 @@ export interface SessionGreeting {
   /** Local wall-clock time used for the greeting, e.g. "08:15". */
   localTime: string;
   timeZone: string;
+  /** "ai" = written by the language model; "template" = the fixed fallback. */
+  source: "ai" | "template";
 }
 
 /** A document stored in Jeannie's Supabase memory. */
