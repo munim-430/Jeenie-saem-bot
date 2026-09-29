@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
@@ -41,6 +42,7 @@ export function AvatarScreen({ director, subtitle, subtitleLive, recognition, on
   return (
     <div className="avatar-screen fixed inset-0 z-20 overflow-hidden">
       <AvatarStage className="absolute inset-0" cue={director.cue} clips={director.clips} onEnded={director.ended} />
+      <EmotePicker director={director} />
 
       <div className="pointer-events-none absolute inset-x-0 bottom-[calc(7.5rem+env(safe-area-inset-bottom))] flex flex-col items-center gap-3 px-4">
         {heard ? <p className="avatar-heard">{heard}</p> : null}

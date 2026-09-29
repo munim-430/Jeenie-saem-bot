@@ -179,11 +179,11 @@ export default function JeannieHud() {
     playEmote("greeting");
   }, [avatarMode, playEmote]);
 
-  // Idle behaviour (avatar screen only): a nod now and then, one check-in after ~3 min.
+  // Idle behaviour (avatar screen only): a gentle sway now and then, one check-in after ~3 min.
   useIdleWatch({
     enabled: avatarMode,
     busy: speech.speaking || speech.preparing || recognition.listening || chat.phase !== "idle",
-    onVariation: () => varyEmote("nod"),
+    onVariation: () => varyEmote("sway"),
     onCheckIn: () => {
       const line = pickCheckIn();
       chat.announce(line, "ko");

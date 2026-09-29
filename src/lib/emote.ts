@@ -4,14 +4,35 @@
 // that clip; the tag is stripped before the text is shown, spoken or sent to
 // Telegram. Replies without a tag fall back to "talking".
 
-export const EMOTES = ["idle", "greeting", "air_kiss", "talking", "listening", "concern", "sadness", "nod"] as const;
+/** Emotes the model may choose for a reply. */
+export const REPLY_EMOTES = [
+  "greeting",
+  "air_kiss",
+  "nod",
+  "supportive",
+  "concern",
+  "sadness",
+  "love",
+  "heartbeat",
+  "shyness",
+  "curiosity",
+  "excitement",
+  "excited",
+  "stress",
+  "frustration",
+  "peek",
+  "spin",
+] as const;
+
+export type ReplyEmote = (typeof REPLY_EMOTES)[number];
+
+/** Every clip the avatar can show: the app drives idle / listening / talking and the sway idle variation. */
+export const EMOTES = ["idle", "listening", "talking", "sway", ...REPLY_EMOTES] as const;
 
 export type Emote = (typeof EMOTES)[number];
 
-/** Emotes the model may choose for a reply. idle/listening/talking are driven by the app itself. */
-export const REPLY_EMOTES = ["greeting", "air_kiss", "concern", "sadness", "nod"] as const satisfies readonly Emote[];
-
-export type ReplyEmote = (typeof REPLY_EMOTES)[number];
+/** Emotes that play once over the base loop: reply emotes plus app-driven one-shots (sway). */
+export type OneShotEmote = Exclude<Emote, "idle" | "listening" | "talking">;
 
 export function isEmote(value: unknown): value is Emote {
   return typeof value === "string" && (EMOTES as readonly string[]).includes(value);
@@ -60,5 +81,12 @@ export function stripEmotes(text: string): string {
 
 /** System-prompt line teaching the model the protocol. */
 export const EMOTE_DIRECTIVE = `Begin every reply with exactly one emote tag chosen from: ${REPLY_EMOTES.map((e) => `[emote:${e}]`).join(", ")}.
-Pick the one that matches your feeling: greeting when welcoming the user, air_kiss for affection or a warm goodbye, concern when the user is stressed, tired, unwell or facing a problem, sadness for bad news or when you missed the user, nod when agreeing, confirming or acknowledging.
+Pick the one that matches your feeling:
+- greeting when welcoming the user; air_kiss for affection or a warm goodbye.
+- nod when agreeing, confirming or acknowledging (the default for ordinary replies); supportive when encouraging the user or reassuring them about a worry.
+- concern when the user is stressed, tired, unwell or facing a problem; sadness for bad news or when you missed the user.
+- love for deep affection or gratitude; heartbeat when the user flatters you or makes your heart flutter; shyness when complimented or teased.
+- curiosity when asking a question or finding something intriguing; excitement for good news or the user's success; excited for playful happiness.
+- stress when a deadline, a heavy workload or something going wrong is under discussion; frustration only on the user's behalf, when something is unfair to them, never at the user.
+- peek and spin only in light, playful moments, rarely.
 The tag is invisible to the user; never mention it and never use it anywhere else in the reply.`;

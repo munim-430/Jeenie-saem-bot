@@ -6,7 +6,7 @@ import {
   AVATAR_FLOOR,
   CLIP_NAMES,
   DEFAULT_CLIPS,
-  clipNameFor,
+  ESSENTIAL_CLIPS,
   type ClipTable,
 } from "@/lib/avatar/clips";
 import type { ClipCue } from "@/lib/avatar/director";
@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 // Two stacked muted videos: the next clip starts on the hidden one and fades in
 // over the current one (~150 ms), so cuts between clips never flash.
 const FADE_MS = 150;
+/** Background clip downloads running at once after the essential clips. */
+const WARM_CONCURRENCY = 2;
 
 interface AvatarStageProps {
   cue: ClipCue;
@@ -40,7 +42,7 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
     onEndedRef.current = onEnded;
   });
 
-  const info = clips[clipNameFor(cue.emote)];
+  const info = clips[cue.emote];
   const { key, loop } = cue;
 
   useEffect(() => {
@@ -79,12 +81,23 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
     };
   }, [key, loop, info.src, info.poster]);
 
-  // Warm the HTTP / service-worker cache so later clips start instantly.
+  // Warm the HTTP / service-worker cache so later clips start instantly: the clips
+  // every state needs first, then the rest a couple at a time so a phone on mobile
+  // data is not asked for every file at once. A clip not warmed yet still streams.
   useEffect(() => {
     const controller = new AbortController();
-    for (const name of CLIP_NAMES) {
-      fetch(clips[name].src, { signal: controller.signal }).catch(() => undefined);
-    }
+    const warm = (name: (typeof CLIP_NAMES)[number]) =>
+      fetch(clips[name].src, { signal: controller.signal }).then(
+        () => undefined,
+        () => undefined,
+      );
+    const rest = CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name));
+    const worker = async () => {
+      for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
+    };
+    void Promise.all(ESSENTIAL_CLIPS.map(warm)).then(() =>
+      Promise.all(Array.from({ length: WARM_CONCURRENCY }, worker)),
+    );
     return () => controller.abort();
     // Once per mount: the table only changes in durations after the manifest loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,6 +113,22 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
+
+  // A clip that fails to load never leaves her frozen: a one-shot hands back to the
+  // base loop, a loop falls back to idle.
+  const errorFor = (index: 0 | 1) => (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    if (loadedKeys.current[index] !== cueKeyRef.current) return;
+    if (!video.loop) {
+      onEndedRef.current();
+      return;
+    }
+    const idle = clips.idle;
+    if (video.getAttribute("src") === idle.src) return;
+    video.poster = idle.poster;
+    video.src = idle.src;
+    void video.play().catch(() => undefined);
+  };
 
   const endedFor = (index: 0 | 1) => (event: SyntheticEvent<HTMLVideoElement>) => {
     if (index !== frontRef.current || event.currentTarget.loop) return;
@@ -129,6 +158,7 @@ export function AvatarStage({ cue, clips, onEnded, className }: AvatarStageProps
           disablePictureInPicture
           disableRemotePlayback
           onEnded={endedFor(index as 0 | 1)}
+          onError={errorFor(index as 0 | 1)}
         />
       ))}
       <div className="avatar-vignette" />

@@ -2,16 +2,16 @@
 // while the mic is held, talking while speech plays); one-shot emotes play once
 // over it and hand back. At most one emote waits behind the one playing.
 
-import type { Emote, ReplyEmote } from "@/lib/emote";
+import type { Emote, OneShotEmote, ReplyEmote } from "@/lib/emote";
 
 export type BaseState = "idle" | "listening" | "talking";
 
 export interface DirectorState {
   base: BaseState;
   /** One-shot emote currently playing. */
-  playing: ReplyEmote | null;
+  playing: OneShotEmote | null;
   /** Next one-shot, played when `playing` ends (queue of one: newer replaces older). */
-  queued: ReplyEmote | null;
+  queued: OneShotEmote | null;
   /** Bumped every time a one-shot starts, so a repeat of the same emote restarts the clip. */
   seq: number;
 }
@@ -21,7 +21,7 @@ export type DirectorEvent =
   /** A reply / greeting / check-in emote. */
   | { type: "emote"; emote: ReplyEmote }
   /** An idle variation: only when nothing else is happening, never queued. */
-  | { type: "vary"; emote: ReplyEmote }
+  | { type: "vary"; emote: OneShotEmote }
   /** The one-shot started as `seq` finished (stale ends are ignored). */
   | { type: "ended"; seq: number };
 
@@ -31,7 +31,7 @@ export function baseStateOf(flags: { listening: boolean; speaking: boolean }): B
   return flags.listening ? "listening" : flags.speaking ? "talking" : "idle";
 }
 
-const start = (state: DirectorState, emote: ReplyEmote | null): DirectorState =>
+const start = (state: DirectorState, emote: OneShotEmote | null): DirectorState =>
   emote ? { ...state, playing: emote, queued: null, seq: state.seq + 1 } : { ...state, playing: null, queued: null };
 
 export function directorReducer(state: DirectorState, event: DirectorEvent): DirectorState {
@@ -61,14 +61,14 @@ export interface ClipCue {
   /** Changes whenever the player must (re)start a clip. */
   key: string;
   loop: boolean;
-  /** Listening: idle clip with the CSS focus treatment. */
+  /** Listening: its own clip plus the CSS focus treatment. */
   focus: boolean;
 }
 
-/** What the stage should show for a state. Listening shares idle's key so the loop is not restarted. */
+/** What the stage should show for a state: a one-shot over the base loop, else the base loop itself. */
 export function cueOf(state: DirectorState): ClipCue {
   const focus = state.base === "listening";
   if (state.playing) return { emote: state.playing, key: `${state.playing}#${state.seq}`, loop: false, focus };
-  const emote: Emote = state.base === "talking" ? "talking" : state.base;
-  return { emote, key: state.base === "talking" ? "talking" : "idle", loop: true, focus };
+  const emote: Emote = state.base;
+  return { emote, key: state.base, loop: true, focus };
 }

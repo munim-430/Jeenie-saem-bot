@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CLIPS, clipNameFor, mergeClipManifest } from "@/lib/avatar/clips";
+import { CLIP_NAMES, DEFAULT_CLIPS, ESSENTIAL_CLIPS, mergeClipManifest } from "@/lib/avatar/clips";
+import { emotePickerEnabled } from "@/lib/avatar/debug";
+import { EMOTES } from "@/lib/emote";
+import { KLING_NAMES, ingestPlan } from "../scripts/avatar-clips/kling.mjs";
+import klingClips from "../assets/avatar/kling/clips.json";
 import {
   INITIAL_DIRECTOR,
   baseStateOf,
@@ -89,13 +93,13 @@ describe("avatar director", () => {
     expect(run([{ type: "ended", seq: first.seq }], second)).toBe(second);
   });
 
-  it("listening cuts the one-shot and keeps the idle loop running under a focus", () => {
+  it("listening cuts the one-shot and plays the listening loop under a focus", () => {
     const state = run([
       { type: "emote", emote: "greeting" },
       { type: "base", base: "listening" },
     ]);
     expect(state.playing).toBeNull();
-    expect(cueOf(state)).toEqual({ emote: "listening", key: "idle", loop: true, focus: true });
+    expect(cueOf(state)).toEqual({ emote: "listening", key: "listening", loop: true, focus: true });
   });
 
   it("holds emotes that arrive while listening until the mic is released", () => {
@@ -108,18 +112,28 @@ describe("avatar director", () => {
   });
 
   it("idle variations never interrupt or queue", () => {
-    expect(run([{ type: "vary", emote: "nod" }]).playing).toBe("nod");
+    expect(run([{ type: "vary", emote: "sway" }]).playing).toBe("sway");
     const busy = run([{ type: "emote", emote: "sadness" }]);
-    expect(run([{ type: "vary", emote: "nod" }], busy)).toBe(busy);
+    expect(run([{ type: "vary", emote: "sway" }], busy)).toBe(busy);
     const talking = run([{ type: "base", base: "talking" }]);
-    expect(run([{ type: "vary", emote: "nod" }], talking)).toBe(talking);
+    expect(run([{ type: "vary", emote: "sway" }], talking)).toBe(talking);
   });
 });
 
 describe("avatar clips", () => {
-  it("listening reuses the idle clip", () => {
-    expect(clipNameFor("listening")).toBe("idle");
-    expect(clipNameFor("air_kiss")).toBe("air_kiss");
+  it("every emote has its own clip, in the table and in the pipeline manifest", () => {
+    expect([...CLIP_NAMES].sort()).toEqual([...EMOTES].sort());
+    for (const emote of EMOTES) {
+      expect(DEFAULT_CLIPS[emote].src).toBe(`/avatar/${emote}.mp4`);
+      expect(manifest).toHaveProperty(emote);
+    }
+    expect(Object.keys(manifest).sort()).toEqual([...EMOTES].sort());
+  });
+
+  it("loops exactly the base states; the essential clips cover every state before a reply", () => {
+    const loops = EMOTES.filter((e) => DEFAULT_CLIPS[e].loop).sort();
+    expect(loops).toEqual(["idle", "listening", "talking"]);
+    expect([...ESSENTIAL_CLIPS].sort()).toEqual(["greeting", "idle", "listening", "talking"]);
   });
 
   it("the static table agrees with the pipeline manifest on files and looping", () => {
@@ -140,7 +154,6 @@ describe("avatar clips", () => {
     const merged = mergeClipManifest(DEFAULT_CLIPS, {
       nod: { src: "/avatar/nod.mp4", poster: "/avatar/nod.jpg", duration: 2.5, loop: false, placeholder: false },
       talking: { src: "https://evil.example/x.mp4", poster: "", duration: 1, loop: true },
-      listening: { src: "/x.mp4", poster: "/x.jpg", duration: 1, loop: true },
       unknown: { src: "/x.mp4", poster: "/x.jpg", duration: 1, loop: true },
       idle: { src: "/avatar/idle.mp4", poster: "/avatar/idle.jpg", duration: -1, loop: true },
     });
@@ -148,6 +161,60 @@ describe("avatar clips", () => {
     expect(merged.talking).toEqual(DEFAULT_CLIPS.talking);
     expect(merged.idle).toEqual(DEFAULT_CLIPS.idle);
     expect(mergeClipManifest(DEFAULT_CLIPS, null)).toBe(DEFAULT_CLIPS);
+  });
+});
+
+describe("Kling ingest", () => {
+  it("ships only accepted clips, under their app names", () => {
+    const plan = ingestPlan(klingClips);
+    const names = plan.map((p) => p.name).sort();
+    expect(names).toEqual(
+      [
+        "concern",
+        "curiosity",
+        "excited",
+        "excitement",
+        "frustration",
+        "heartbeat",
+        "idle",
+        "listening",
+        "love",
+        "peek",
+        "sadness",
+        "shyness",
+        "spin",
+        "stress",
+        "supportive",
+        "sway",
+        "talking",
+      ].sort(),
+    );
+    for (const name of names) expect(EMOTES).toContain(name);
+    expect(plan.find((p) => p.name === "talking")?.file).toBe("23_speaking.mp4");
+    expect(plan.find((p) => p.name === "excited")?.file).toBe("07_sway_2.mp4");
+  });
+
+  it("never ingests rejected, missing or unmapped clips", () => {
+    const plan = ingestPlan({
+      clips: [
+        { id: "air_kiss", file: "18_air_kiss__rejected.mp4", verdict: "reject" },
+        { id: "love", file: null, verdict: "accept" },
+        { id: "entry", file: "02_entry.mp4", verdict: "accept" },
+        { id: "peek", file: "04_peek.mp4", verdict: "accept" },
+      ],
+    });
+    expect(plan).toEqual([{ name: "peek", file: "04_peek.mp4", loop: false }]);
+    expect(KLING_NAMES).not.toHaveProperty("entry");
+  });
+});
+
+describe("emote picker (QA)", () => {
+  it("shows on previews, locally only on request, never on production", () => {
+    expect(emotePickerEnabled("preview", "")).toBe(true);
+    expect(emotePickerEnabled("local", "?debug=emotes")).toBe(true);
+    expect(emotePickerEnabled("local", "")).toBe(false);
+    expect(emotePickerEnabled("production", "?debug=emotes")).toBe(false);
+    expect(emotePickerEnabled(undefined, "?debug=emotes")).toBe(false);
   });
 });
 

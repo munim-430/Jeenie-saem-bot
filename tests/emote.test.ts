@@ -47,3 +47,24 @@ describe("stripEmotes", () => {
 it("teaches every reply emote", () => {
   for (const emote of REPLY_EMOTES) expect(EMOTE_DIRECTIVE).toContain(`[emote:${emote}]`);
 });
+
+it("gives every reply emote a rule for when to use it", () => {
+  const rules = EMOTE_DIRECTIVE.split("\n").slice(1).join("\n");
+  for (const emote of REPLY_EMOTES) expect(rules).toMatch(new RegExp(`\\b${emote}\\b`));
+});
+
+describe("the Kling emote set", () => {
+  it("parses every reply emote and strips its tag", () => {
+    for (const emote of REPLY_EMOTES) {
+      expect(parseEmote(`[emote:${emote}] 네.`)).toEqual({ emote, text: "네.", pending: false });
+      expect(stripEmotes(`[emote:${emote}] 네.`)).toBe("네.");
+    }
+  });
+
+  it("never lets the model drive the app-only clips", () => {
+    for (const name of ["idle", "listening", "talking", "sway"]) {
+      expect(REPLY_EMOTES).not.toContain(name);
+      expect(parseEmote(`[emote:${name}] hi`)).toEqual({ emote: null, text: "hi", pending: false });
+    }
+  });
+});

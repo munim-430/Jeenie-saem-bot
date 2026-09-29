@@ -2,9 +2,34 @@
   "idle": {
     "src": "/avatar/idle.mp4",
     "poster": "/avatar/idle.jpg",
-    "duration": 5,
+    "duration": 6.042,
     "loop": true,
-    "placeholder": false
+    "placeholder": false,
+    "source": "kling"
+  },
+  "listening": {
+    "src": "/avatar/listening.mp4",
+    "poster": "/avatar/listening.jpg",
+    "duration": 8.042,
+    "loop": true,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "talking": {
+    "src": "/avatar/talking.mp4",
+    "poster": "/avatar/talking.jpg",
+    "duration": 8.042,
+    "loop": true,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "sway": {
+    "src": "/avatar/sway.mp4",
+    "poster": "/avatar/sway.jpg",
+    "duration": 8.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
   },
   "greeting": {
     "src": "/avatar/greeting.mp4",
@@ -20,32 +45,115 @@
     "loop": false,
     "placeholder": false
   },
-  "talking": {
-    "src": "/avatar/talking.mp4",
-    "poster": "/avatar/talking.jpg",
-    "duration": 5.167,
-    "loop": true,
-    "placeholder": false
-  },
-  "concern": {
-    "src": "/avatar/concern.mp4",
-    "poster": "/avatar/concern.jpg",
-    "duration": 6.042,
-    "loop": false,
-    "placeholder": false
-  },
-  "sadness": {
-    "src": "/avatar/sadness.mp4",
-    "poster": "/avatar/sadness.jpg",
-    "duration": 7.042,
-    "loop": false,
-    "placeholder": false
-  },
   "nod": {
     "src": "/avatar/nod.mp4",
     "poster": "/avatar/nod.jpg",
     "duration": 5.167,
     "loop": false,
     "placeholder": false
+  },
+  "supportive": {
+    "src": "/avatar/supportive.mp4",
+    "poster": "/avatar/supportive.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "concern": {
+    "src": "/avatar/concern.mp4",
+    "poster": "/avatar/concern.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "sadness": {
+    "src": "/avatar/sadness.mp4",
+    "poster": "/avatar/sadness.jpg",
+    "duration": 7.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "love": {
+    "src": "/avatar/love.mp4",
+    "poster": "/avatar/love.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "heartbeat": {
+    "src": "/avatar/heartbeat.mp4",
+    "poster": "/avatar/heartbeat.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "shyness": {
+    "src": "/avatar/shyness.mp4",
+    "poster": "/avatar/shyness.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "curiosity": {
+    "src": "/avatar/curiosity.mp4",
+    "poster": "/avatar/curiosity.jpg",
+    "duration": 5.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "excitement": {
+    "src": "/avatar/excitement.mp4",
+    "poster": "/avatar/excitement.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "excited": {
+    "src": "/avatar/excited.mp4",
+    "poster": "/avatar/excited.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "stress": {
+    "src": "/avatar/stress.mp4",
+    "poster": "/avatar/stress.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "frustration": {
+    "src": "/avatar/frustration.mp4",
+    "poster": "/avatar/frustration.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "peek": {
+    "src": "/avatar/peek.mp4",
+    "poster": "/avatar/peek.jpg",
+    "duration": 6.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "spin": {
+    "src": "/avatar/spin.mp4",
+    "poster": "/avatar/spin.jpg",
+    "duration": 8.042,
+    "loop": false,
+    "placeholder": false,
+    "source": "kling"
   }
 }

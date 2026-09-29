@@ -12,6 +12,9 @@ const nextConfig = {
   poweredByHeader: false,
   // `ws` (Edge-TTS client) has optional native add-ons; keep it out of the server bundle.
   serverExternalPackages: ["ws"],
+  // Which deployment this build is for (Vercel sets VERCEL_ENV at build time): gates the
+  // preview-only emote picker so it can never render on production.
+  env: { NEXT_PUBLIC_DEPLOY_ENV: process.env.VERCEL_ENV || "local" },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

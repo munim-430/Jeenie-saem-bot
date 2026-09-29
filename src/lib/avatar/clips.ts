@@ -13,8 +13,8 @@ export interface ClipInfo {
   placeholder: boolean;
 }
 
-/** Emotes that have their own clip file ("listening" reuses idle). */
-export type ClipName = Exclude<Emote, "listening">;
+/** Every emote has its own clip file. */
+export type ClipName = Emote;
 
 export type ClipTable = Record<ClipName, ClipInfo>;
 
@@ -33,21 +33,32 @@ const clip = (name: ClipName, duration: number, loop: boolean, placeholder: bool
 });
 
 export const DEFAULT_CLIPS: ClipTable = {
-  idle: clip("idle", 5, true, false),
+  idle: clip("idle", 6.042, true, false),
+  listening: clip("listening", 8.042, true, false),
+  talking: clip("talking", 8.042, true, false),
+  sway: clip("sway", 8.042, false, false),
   greeting: clip("greeting", 5.167, false, false),
   air_kiss: clip("air_kiss", 5.167, false, false),
-  talking: clip("talking", 5.167, true, false),
+  nod: clip("nod", 5.167, false, false),
+  supportive: clip("supportive", 6.042, false, false),
   concern: clip("concern", 6.042, false, false),
   sadness: clip("sadness", 7.042, false, false),
-  nod: clip("nod", 5.167, false, false),
+  love: clip("love", 6.042, false, false),
+  heartbeat: clip("heartbeat", 6.042, false, false),
+  shyness: clip("shyness", 6.042, false, false),
+  curiosity: clip("curiosity", 5.042, false, false),
+  excitement: clip("excitement", 6.042, false, false),
+  excited: clip("excited", 6.042, false, false),
+  stress: clip("stress", 6.042, false, false),
+  frustration: clip("frustration", 6.042, false, false),
+  peek: clip("peek", 6.042, false, false),
+  spin: clip("spin", 8.042, false, false),
 };
 
-export const CLIP_NAMES = EMOTES.filter((e): e is ClipName => e !== "listening");
+export const CLIP_NAMES: readonly ClipName[] = EMOTES;
 
-/** The clip file an emote plays: "listening" is idle plus a CSS focus. */
-export function clipNameFor(emote: Emote): ClipName {
-  return emote === "listening" ? "idle" : emote;
-}
+/** Fetched first on load: every state the player can enter before a reply arrives. */
+export const ESSENTIAL_CLIPS: readonly ClipName[] = ["idle", "greeting", "listening", "talking"];
 
 function isClipInfo(value: unknown): value is ClipInfo {
   if (!value || typeof value !== "object") return false;
@@ -68,7 +79,7 @@ export function mergeClipManifest(base: ClipTable, manifest: unknown): ClipTable
   if (!manifest || typeof manifest !== "object") return base;
   const next: ClipTable = { ...base };
   for (const [name, entry] of Object.entries(manifest as Record<string, unknown>)) {
-    if (!isEmote(name) || name === "listening" || !isClipInfo(entry)) continue;
+    if (!isEmote(name) || !isClipInfo(entry)) continue;
     next[name] = {
       src: entry.src,
       poster: entry.poster,
