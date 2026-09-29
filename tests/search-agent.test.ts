@@ -10,6 +10,7 @@ import {
   parseDuckDuckGoHtml,
   parseDuckDuckGoInstantAnswer,
   parseDuckDuckGoLite,
+  parseDeepSeekSearch,
   resetSearchState,
   webSearch,
 } from "@/lib/agents/search-agent";
@@ -133,6 +134,7 @@ const EMPTY_INSTANT = { Heading: "", Answer: "", AbstractText: "", AbstractURL: 
 
 beforeEach(() => {
   resetSearchState();
+  vi.stubEnv("DEEPSEEK_API_KEY", "");
   vi.stubEnv("TAVILY_API_KEY", "");
   vi.stubEnv("GOOGLE_CSE_API_KEY", "");
   vi.stubEnv("GOOGLE_CSE_ID", "");
@@ -307,7 +309,84 @@ describe("dedupeResults", () => {
   });
 });
 
+// Shape of an Anthropic-compatible Messages response with the web_search server tool.
+const DEEPSEEK_SEARCH = {
+  content: [
+    { type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "seoul weather" } },
+    {
+      type: "web_search_tool_result",
+      tool_use_id: "srv_1",
+      content: [
+        { type: "web_search_result", url: "https://weather.example/seoul", title: "Seoul forecast", page_age: "2026-09-29" },
+        { type: "web_search_result", url: "https://news.example/rain", title: "Rain in Seoul" },
+        { type: "web_search_result", url: "ftp://bad.example/x", title: "bad" },
+      ],
+    },
+    { type: "text", text: "Seoul is " },
+    {
+      type: "text",
+      text: "22°C with rain later.",
+      citations: [
+        { type: "web_search_result_location", url: "https://weather.example/seoul", title: "Seoul forecast", cited_text: "High 22°C." },
+        { type: "web_search_result_location", url: "https://weather.example/seoul", title: "Seoul forecast", cited_text: "Rain after 6pm." },
+      ],
+    },
+  ],
+};
+
+describe("parseDeepSeekSearch", () => {
+  it("turns web_search results into results with cited snippets and the model's summary", () => {
+    const { results, answer } = parseDeepSeekSearch(DEEPSEEK_SEARCH);
+    expect(answer).toBe("Seoul is 22°C with rain later.");
+    expect(results).toEqual([
+      { title: "Seoul forecast", url: "https://weather.example/seoul", snippet: "High 22°C. … Rain after 6pm.", source: "deepseek", publishedDate: "2026-09-29" },
+      { title: "Rain in Seoul", url: "https://news.example/rain", snippet: "", source: "deepseek" },
+    ]);
+  });
+
+  it("returns nothing for a search error block or an empty body", () => {
+    expect(parseDeepSeekSearch({ content: [{ type: "web_search_tool_result", content: { type: "web_search_tool_result_error", error_code: "unavailable" } }] })).toEqual({ results: [], answer: undefined });
+    expect(parseDeepSeekSearch({})).toEqual({ results: [], answer: undefined });
+  });
+});
+
 describe("webSearch provider chain", () => {
+  it("uses DeepSeek's native web_search first when DEEPSEEK_API_KEY is set", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-1");
+    vi.stubEnv("TAVILY_API_KEY", TAVILY_KEY);
+    const fetchMock = mockFetch((url, init) => {
+      expect(url.href).toBe("https://api.deepseek.com/anthropic/v1/messages");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-api-key")).toBe("sk-deepseek-1");
+      expect(headers.get("anthropic-version")).toBe("2023-06-01");
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("deepseek-v4-flash");
+      expect(body.tools).toEqual([{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]);
+      expect(body.messages[0].content).toContain("seoul weather");
+      return json(DEEPSEEK_SEARCH);
+    });
+
+    const res = await webSearch("seoul weather");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.provider).toBe("deepseek");
+    expect(res.answer).toBe("Seoul is 22°C with rain later.");
+    expect(res.results.map((r) => r.url)).toEqual(["https://weather.example/seoul", "https://news.example/rain"]);
+  });
+
+  it("falls back to the next provider when DeepSeek search fails", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-deepseek-1");
+    vi.stubEnv("TAVILY_API_KEY", TAVILY_KEY);
+    mockFetch((url) =>
+      url.hostname === "api.deepseek.com"
+        ? json({ error: { message: "unsupported tool" } }, 400)
+        : json({ results: [{ title: "T", url: "https://t.com/1", content: "tavily hit" }] }),
+    );
+    const res = await webSearch("seoul weather");
+    expect(res.provider).toBe("tavily");
+    expect(res.results[0]?.url).toBe("https://t.com/1");
+  });
+
+
   it("uses Tavily first with a bearer key and normalizes results", async () => {
     vi.stubEnv("TAVILY_API_KEY", TAVILY_KEY);
     const fetchMock = mockFetch((url, init) => {
