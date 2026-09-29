@@ -1,12 +1,13 @@
 // Language model resolution. DeepSeek (Jeannie's default brain) goes through
 // the AI SDK's DeepSeek provider and Claude through the Anthropic provider;
 // OpenAI and Ollama both go through the OpenAI provider's Chat Completions
-// client (Ollama exposes an OpenAI-compatible `/v1` API). DeepSeek has no image
-// input, so vision resolves through its own provider (see env.ts).
+// client (Ollama exposes an OpenAI-compatible `/v1` API). DeepSeek's chat
+// models have no image input, so vision resolves through its own provider and
+// model (see env.ts).
 // Runs on Edge and Node.js.
 
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
-import { createDeepSeek } from "@ai-sdk/deepseek";
+import { createDeepSeek, type DeepSeekLanguageModelOptions } from "@ai-sdk/deepseek";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel, streamText } from "ai";
 import { getEnv } from "../env";
@@ -36,10 +37,17 @@ export function getLanguageModel(kind: "text" | "vision"): ResolvedModel | null 
   const provider = kind === "vision" ? llm.visionProvider : llm.provider;
   const modelId = kind === "vision" ? llm.visionModel : llm.model;
 
-  if (provider === "deepseek" && llm.deepseekApiKey && kind === "text") {
+  if (provider === "deepseek" && llm.deepseekApiKey) {
     // Always pass a base URL, for the same reason as OpenAI below (DEEPSEEK_BASE_URL may be blank).
     const deepseek = createDeepSeek({ apiKey: llm.deepseekApiKey, baseURL: llm.deepseekBaseUrl ?? "https://api.deepseek.com" });
-    return { model: deepseek(modelId), provider: "deepseek", modelId };
+    return {
+      model: deepseek(modelId),
+      provider: "deepseek",
+      modelId,
+      // V4 models think before answering by default. Jeannie speaks her replies,
+      // so she answers straight away.
+      providerOptions: { deepseek: { thinking: { type: "disabled" } } satisfies DeepSeekLanguageModelOptions },
+    };
   }
 
   if (provider === "anthropic" && llm.anthropicApiKey) {
