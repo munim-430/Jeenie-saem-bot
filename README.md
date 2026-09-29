@@ -4,6 +4,12 @@ Jeannie is a J.A.R.V.I.S.-style personal AI with a neon-pink holographic HUD. Sh
 Korean (한국어), sees through your camera, searches the live web, talks back with a neural voice,
 reports on your Hangeul admin portal, and answers every smart-home command with instant composure.
 
+| Layer | Service |
+| --- | --- |
+| **Brain** | [DeepSeek](https://platform.deepseek.com) (`deepseek-chat`). Claude, OpenAI or Ollama still work as alternatives, and handle images, which DeepSeek can't read. |
+| **Voice** | [ElevenLabs](https://elevenlabs.io) (`eleven_multilingual_v2`, English + Korean), with free Edge and browser voices as fallbacks. |
+| **Memory** | [Supabase](https://supabase.com): markdown and JSON Lines notes you upload, searched with Postgres full-text search on every message. |
+
 Built with Next.js 15 (App Router, TypeScript), Tailwind CSS, Framer Motion, the Vercel AI SDK, and
 Canvas-based holographic visualizers. Ready for Vercel with zero extra configuration.
 
@@ -16,6 +22,7 @@ Canvas-based holographic visualizers. Ready for Vercel with zero extra configura
 | **Live Search Agent** | Time-sensitive or fact-checking questions go to Tavily, then Google Custom Search, then DuckDuckGo. The results are summarized with inline `[n]` citations. |
 | **Vision & Localization Agent** | Image attachments (documents, screenshots, camera frames) get a structured bilingual analysis, with visible text transcribed and translated. |
 | **Hangeul Admin Bridge** | Fetches admin reports and status checks from the Hangeul portal on demand. Uses mock data when live access isn't configured, and sends a daily report to Telegram. |
+| **Mistake Audit Agent** | "Audit this for mistakes", "실수 점검해줘": answers in a fixed frame (Issue · Cause · Recommendation) and asks for approval. "승인" / "approve" gets a standard execution confirmation; "취소" / "cancel" puts it on hold. |
 | **General Cognitive Agent** | Handles everything else and can call web search on its own. |
 
 Also included:
@@ -25,6 +32,9 @@ Also included:
 - **HUD:** a canvas arc-reactor orb, a spectrum analyzer, a translucent chat terminal, tactical telemetry, IoT control tiles, and a camera scanner.
 - **Telegram bridge:** two-way bot. Chat with Jeannie, send photos for analysis, run `/report`, `/search`, and `/status`.
 - **Language modes:** Auto-detect, English, Korean, or bilingual (English then Korean). You can also ask for "both languages" in any message.
+- **Honorifics:** every reply addresses you with one title, drawn at random: 부장님 60% of the time, 사장님 10%, sir 30%. Each reply is an independent draw, so the split holds over many replies rather than exactly per ten.
+- **Session greeting:** a new HUD session (and Telegram `/start`) opens with a Korean greeting for your local time of day (좋은 아침입니다 05–11, 좋은 오후입니다 12–17, 좋은 저녁입니다 18–21, 늦은 시간까지 수고 많으십니다 at night) plus an encouraging line. Set `JEANNIE_TIMEZONE` (default `Asia/Dhaka`).
+- **Memory:** upload `.md` and `.jsonl` files from the HUD's Memory panel. Pinned notes (like your profile) are always in her prompt; the rest are recalled when a message matches them.
 
 ## Quick start
 
@@ -35,8 +45,9 @@ npm run dev                  # http://localhost:3000
 ```
 
 With no keys at all, Jeannie still runs in offline mode. IoT confirmations, live search (DuckDuckGo),
-Edge neural voice, camera, and the mock Hangeul report all work. Add `DEEPSEEK_API_KEY` (DeepSeek),
-`ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY`, or run [Ollama](https://ollama.com) and set `LLM_PROVIDER=ollama`, to turn on full reasoning and vision.
+Edge neural voice, camera, and the mock Hangeul report all work. Add `DEEPSEEK_API_KEY` for full reasoning.
+For image analysis, also add `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY`, or run [Ollama](https://ollama.com)
+with a vision model.
 
 | Script | Purpose |
 | --- | --- |
@@ -44,6 +55,36 @@ Edge neural voice, camera, and the mock Hangeul report all work. Add `DEEPSEEK_A
 | `npm run build` / `npm start` | Build and serve for production |
 | `npm test` | Unit and route tests (Vitest) |
 | `npm run lint` / `npm run typecheck` | ESLint and TypeScript checks |
+| `npm run memory:upload -- <files> [--pin]` | Upload notes to memory through `/api/memory` (uses `JEANNIE_URL` and `JEANNIE_ACCESS_KEY`) |
+
+## Memory (Supabase)
+
+1. **Create the tables.** Open your Supabase project → **SQL Editor**, paste
+   [`supabase/migrations/20260928000000_jeannie_memory.sql`](supabase/migrations/20260928000000_jeannie_memory.sql)
+   and run it (or `supabase db push` with the Supabase CLI).
+   - Every table has row-level security on and no policies. The public anon key can't read anything; only the server's
+     service-role key can.
+2. **Set the keys.** Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. They're under **Project Settings → API**; use
+   the `service_role` or `sb_secret_…` key, never with a `NEXT_PUBLIC_` prefix. Also set `JEANNIE_ACCESS_KEY`: memory is
+   never used or editable without it, because the notes are personal.
+3. **Upload notes.** In the HUD's **Memory** panel, tick **PIN** for your profile, then pick the files. Or use the CLI:
+   ```bash
+   npm run memory:upload -- memory/profile.md --pin
+   npm run memory:upload -- memory/saemur-knowledge.jsonl
+   ```
+   - `.md` files are split by heading.
+   - `.jsonl` files keep one record per note (`{id, type, title, text, tags, entity, updated}`), so re-uploading
+     replaces them by file name.
+   - Files that look like they contain API keys, tokens or ID numbers are refused.
+   - `memory/` is gitignored, so personal notes stay out of the repo.
+
+**How recall works.** Each message is reduced to search terms: stopwords are dropped and Korean particles are
+stripped, so "HGLC는 어디에 있어?" becomes `hglc`. The terms are prefix-matched against the notes' titles, tags and
+text. The best matches, plus the pinned notes, are added to the prompt as reference data. This happens for the HUD with
+a valid access key and for the Telegram admin chat, and never for an open deployment. If Supabase is slow (over 1.5 s)
+or down, Jeannie answers without memory.
+
+`.mcp.json` registers the project's read-only Supabase MCP server for Claude Code (`claude /mcp` to authenticate).
 
 ## Deploy to Vercel
 
@@ -53,7 +94,7 @@ Edge neural voice, camera, and the mock Hangeul report all work. Add `DEEPSEEK_A
    - The framework preset is detected as **Next.js**.
 3. **Set environment variables.**
    - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
-   - At minimum, set a language model key (`DEEPSEEK_API_KEY` for DeepSeek, `ANTHROPIC_API_KEY` for Claude, or `OPENAI_API_KEY`) and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
+   - At minimum, set a language model key (`DEEPSEEK_API_KEY`) and `TAVILY_API_KEY`. The keyless DuckDuckGo fallback rate-limits shared data-center IPs such as Vercel's, so Tavily makes live search reliable.
    - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
 4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
 5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
@@ -82,13 +123,15 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | Variable | Purpose |
 | --- | --- |
 | `JEANNIE_ACCESS_KEY` | Shared secret for every `/api` route (header `x-jeannie-key` or `Authorization: Bearer`). The HUD prompts for it once and remembers it in this browser. |
+| `JEANNIE_TIMEZONE` | IANA time zone for the Korean session greeting. Default `Asia/Dhaka`. |
 | `LLM_PROVIDER` | `auto` (default: DeepSeek if its key is set, then Claude, then OpenAI, then Ollama), `deepseek`, `anthropic`, `openai` or `ollama`. |
-| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_VISION_MODEL` | DeepSeek. The default model is `deepseek-v4-flash` (`deepseek-v4-pro` is stronger) with thinking turned off for quick spoken replies. Images go to `deepseek-v4-flash-vision-exp`, because DeepSeek's text models can't see images. |
+| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL` | DeepSeek, Jeannie's brain. `deepseek-chat` (default) can call the web-search tool; `deepseek-reasoner` thinks longer but has no tools. DeepSeek can't read images, so image analysis uses Claude or OpenAI when their key is set. |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_VISION_MODEL` | Claude. The default model is `claude-opus-5`; `claude-sonnet-5` and `claude-haiku-4-5` are cheaper. If Claude's safety classifiers decline a request, it is retried on a fallback model automatically. |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `DEFAULT_MODEL`, `VISION_MODEL` | OpenAI, or any OpenAI-compatible endpoint such as Groq or OpenRouter. The default model is `gpt-4o`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL` | Local or self-hosted Ollama through its OpenAI-compatible API. |
 | `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Search providers. DuckDuckGo is the keyless fallback. |
-| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Premium voice. `eleven_multilingual_v2` speaks Korean. |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Jeannie's main voice. `eleven_multilingual_v2` speaks Korean; `eleven_flash_v2_5` is faster. With only the key set, the premade voice "Rachel" is used; free plans must set the ID of a voice they created, since library voices return HTTP 402 there (Jeannie then falls back to the Edge voice). |
+| `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | Memory. The key is server-only; the publishable/anon key can't read memory. See [Memory](#memory-supabase). |
 | `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. The webhook secret is required, and only the admin chat gets answers. |
 | `HANGEUL_BASE_URL`, `HANGEUL_USERNAME`, `HANGEUL_PASSWORD`, `HANGEUL_REPORT_PATH`, `HANGEUL_STATUS_PATH`, `MOCK_MODE` | Hangeul admin portal. See below. |
@@ -97,6 +140,20 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 > **About the voice:** set `ELEVENLABS_VOICE_ID` to a voice you own or are licensed to use, such as
 > one from the ElevenLabs Voice Library or your own recording. Cloning a real person's voice without
 > their consent breaks ElevenLabs' terms and personality rights, so Jeannie doesn't ship with one.
+
+## How the mistake audit works
+
+1. **Ask for an audit.** Paste what you want checked and ask for an audit ("mistake audit", "check my errors",
+   "실수 점검해줘", "잘못된 점 찾아줘"). Jeannie answers in a fixed frame (`■ 점검 결과`) with one numbered line per finding:
+   Issue · Cause · Recommendation. She always ends with `■ 승인 요청`.
+2. **Approve or reject.** Reply with a short approval (`승인`, `진행해`, `approve`, `go ahead`) to get the standard
+   confirmation, "네, 부장님. 승인하신 권장 조치를 진행하겠습니다. …", listing the approved items. A rejection (`취소`, `보류`,
+   `cancel`) puts the recommendations on hold. Anything else is treated as a new message.
+3. **Where the state lives.** In the HUD it comes from the conversation itself. Telegram sends one message at a time, so
+   there the pending audit is stored in Supabase (`jeannie_sessions`) for 30 minutes, and every decision is logged in
+   `jeannie_audit_log`.
+4. **What the confirmation means.** Like the IoT override, the confirmation is only a message. Jeannie has no tools that
+   carry out the recommendations yet. The logged decisions are there for a future integration to act on.
 
 ## How the IoT override works
 
@@ -134,7 +191,9 @@ Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_M
 
 | Route | Runtime | Description |
 | --- | --- | --- |
-| `POST /api/chat` | Edge | `{ messages, image?, lang? }` → streamed text. Metadata comes back in the `x-jeannie-agent`, `x-jeannie-lang`, `x-jeannie-provider`, and `x-jeannie-sources` headers. |
+| `POST /api/chat` | Edge | `{ messages, image?, lang? }` → streamed text. Metadata comes back in the `x-jeannie-agent`, `x-jeannie-lang`, `x-jeannie-provider`, `x-jeannie-sources`, and `x-jeannie-honorific` (URI-encoded) headers. |
+| `GET /api/session` | Edge | The opening greeting: `{ greeting, honorific, localTime, timeZone }`. |
+| `GET/POST/PATCH/DELETE /api/memory` | Node.js | List, upload (`{ name, content, pinned? }` or multipart), pin (`?id=` + `{ pinned }`) and delete (`?id=`) memory documents. Needs `JEANNIE_ACCESS_KEY`. |
 | `GET/POST /api/search` | Edge | Live search: `?q=` or `{ query, maxResults? }`. |
 | `POST /api/tts` | Node.js | `{ text, lang? }` → `audio/mpeg`. The engine used is named in `x-jeannie-tts-engine`. Returns 503 when only the browser voice is available. |
 | `GET/POST /api/hangeul` | Node.js | `action=status\|report\|notify`, plus the daily cron. |
@@ -146,17 +205,19 @@ Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_M
 ```
 src/
 ├── app/
-│   ├── api/{chat,search,tts,hangeul,status}/route.ts
+│   ├── api/{chat,search,tts,hangeul,status,session,memory}/route.ts
 │   ├── api/telegram/webhook/route.ts
 │   ├── layout.tsx · page.tsx · globals.css      # the pink hologram HUD
-├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · CameraScanner
+├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · MemoryPanel · CameraScanner
 ├── hooks/        chat streaming, voice output, speech recognition
 └── lib/
     ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent · hangeul-bridge
-    │             tts-engine · edge-tts · llm · persona
+    │             tts-engine · edge-tts · llm · persona · etiquette · audit-flow
+    ├── memory/   chunk (markdown/JSONL chunking, secret guard, search terms) · store · supabase
     ├── client/   typed fetch wrappers for the HUD
     └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
 tests/            Vitest suites for agents and routes
+supabase/migrations/  memory tables, search function, audit state
 ```
 
 The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `route.ts` file, so it lives at `api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.

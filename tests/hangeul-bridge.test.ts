@@ -141,7 +141,7 @@ describe("isHangeulQuery", () => {
   });
 
   it("answers a status question with a status check and a report question with the report", async () => {
-    for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
+    for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
     const ask = (content: string) => runOrchestratorToText({ messages: [{ role: "user", content }] }, { trusted: false });
     const report = await ask("Give me the Hangeul report on payment status");
     expect(report.agent).toBe("hangeul");
@@ -160,7 +160,7 @@ describe("routing cost", () => {
     ["newlines", "\n"],
     ["mixed whitespace", " \r\n\t"],
   ])("stays linear on 20,000 characters of %s", async (_label, filler) => {
-    for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
+    for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER"]) vi.stubEnv(name, "");
     const text = padded(filler);
     const timed = async (run: () => unknown) => {
       const started = performance.now();

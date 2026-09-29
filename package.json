@@ -2,21 +2,22 @@
   "name": "jeenie-saem-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Jeannie: bilingual (English/Korean) multimodal personal AI with a neon-pink tactical HUD.",
+  "description": "Jeannie: bilingual (English/Korean) multimodal personal AI with a neon-pink tactical HUD. DeepSeek brain, ElevenLabs voice, Supabase memory.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "memory:upload": "node scripts/upload-memory.mjs"
   },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.65",
-    "@ai-sdk/deepseek": "^3.0.56",
+    "@ai-sdk/deepseek": "^3.0.54",
     "@ai-sdk/openai": "^4.0.78",
     "ai": "^7.0.118",
     "clsx": "^2.1.1",

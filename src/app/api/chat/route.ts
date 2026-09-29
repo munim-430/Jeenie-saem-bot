@@ -70,6 +70,8 @@ export async function POST(req: Request): Promise<Response> {
       [CHAT_HEADERS.agent]: result.agent,
       [CHAT_HEADERS.lang]: result.lang,
       [CHAT_HEADERS.provider]: result.provider,
+      // Header values must be ASCII; "부장님" travels URI-encoded.
+      [CHAT_HEADERS.honorific]: encodeURIComponent(result.honorific),
     });
     if (result.sources.length > 0) {
       headers.set(CHAT_HEADERS.sources, encodeHeaderJson(result.sources.slice(0, MAX_SOURCES)));

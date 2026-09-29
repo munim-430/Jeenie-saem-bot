@@ -27,3 +27,6 @@ next-env.d.ts
 # misc
 .DS_Store
 npm-debug.log*
+
+# personal notes kept locally for `npm run memory:upload` (they live in Supabase, not git)
+/memory/

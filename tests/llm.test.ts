@@ -36,14 +36,14 @@ describe("getLanguageModel (OpenAI base URL)", () => {
     ["a your_* placeholder", "your_openai_base_url"],
     ["unset", undefined],
   ])("falls back to api.openai.com when OPENAI_BASE_URL is %s", async (_label, value) => {
-    vi.stubEnv("LLM_PROVIDER", "openai");
+    vi.stubEnv("LLM_PROVIDER", "auto");
     vi.stubEnv("OPENAI_API_KEY", "sk-test");
     vi.stubEnv("OPENAI_BASE_URL", value);
     expect(await requestedUrl()).toBe("https://api.openai.com/v1/chat/completions");
   });
 
   it("uses a configured OpenAI-compatible endpoint", async () => {
-    vi.stubEnv("LLM_PROVIDER", "openai");
+    vi.stubEnv("LLM_PROVIDER", "auto");
     vi.stubEnv("OPENAI_API_KEY", "sk-test");
     vi.stubEnv("OPENAI_BASE_URL", "https://llm.example.com/v1");
     expect(await requestedUrl()).toBe("https://llm.example.com/v1/chat/completions");

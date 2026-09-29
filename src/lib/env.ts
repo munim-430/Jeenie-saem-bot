@@ -31,6 +31,37 @@ function reachableOllamaUrl(): string | undefined {
   }
 }
 
+/** Provider for image analysis: DeepSeek cannot read images, so it never qualifies. */
+function visionProviderFor(
+  text: LlmProvider,
+  keys: { anthropic?: string; openai?: string; ollama?: string },
+): LlmProvider {
+  if (text === "anthropic" || text === "openai" || text === "ollama") return text;
+  if (keys.anthropic) return "anthropic";
+  if (keys.openai) return "openai";
+  return "none";
+}
+
+function modelFor(provider: LlmProvider, models: Record<Exclude<LlmProvider, "none">, string>): string {
+  return provider === "none" ? models.openai : models[provider];
+}
+
+/** A valid IANA time zone, else Asia/Dhaka (where Jeannie's operator lives). */
+function timeZone(): string {
+  const tz = read("JEANNIE_TIMEZONE") ?? DEFAULT_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
+
+export const DEFAULT_TIMEZONE = "Asia/Dhaka";
+
+/** ElevenLabs premade "Rachel", used when only the API key is set; speaks Korean with the multilingual models. */
+export const DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+
 export function getEnv() {
   const deepseekKey = read("DEEPSEEK_API_KEY");
   const anthropicKey = read("ANTHROPIC_API_KEY");
@@ -54,40 +85,53 @@ export function getEnv() {
             ? "ollama"
             : "none";
 
-  const deepseekModel = read("DEEPSEEK_MODEL") ?? "deepseek-v4-flash";
   const anthropicModel = read("ANTHROPIC_MODEL") ?? "claude-opus-5";
   const defaultModel = read("DEFAULT_MODEL") ?? "gpt-4o";
   const ollamaModel = read("OLLAMA_MODEL") ?? "llama3.1";
+  const textModels = {
+    deepseek: read("DEEPSEEK_MODEL") ?? "deepseek-chat",
+    anthropic: anthropicModel,
+    openai: defaultModel,
+    ollama: ollamaModel,
+  };
+  const visionModels = {
+    deepseek: textModels.deepseek,
+    anthropic: read("ANTHROPIC_VISION_MODEL") ?? anthropicModel,
+    openai: read("VISION_MODEL") ?? defaultModel,
+    ollama: read("OLLAMA_VISION_MODEL") ?? "llava",
+  };
+  const visionProvider = visionProviderFor(llmProvider, { anthropic: anthropicKey, openai: openaiKey });
+
+  // The project URL is public, so the Next.js-style NEXT_PUBLIC_ name works too. The key
+  // must be the server-only secret (sb_secret_… or legacy service_role): the memory
+  // tables refuse the publishable/anon key by design.
+  const supabaseUrl = read("SUPABASE_URL") ?? read("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseServiceKey = read("SUPABASE_SERVICE_ROLE_KEY") ?? read("SUPABASE_SECRET_KEY");
 
   return {
     appName: read("NEXT_PUBLIC_APP_NAME") ?? "Jeannie AI",
     voiceName: read("NEXT_PUBLIC_VOICE_NAME") ?? "Jeannie",
     accessKey: read("JEANNIE_ACCESS_KEY"),
     cronSecret: read("CRON_SECRET"),
+    timeZone: timeZone(),
 
     llm: {
       provider: llmProvider,
       deepseekApiKey: deepseekKey,
+      deepseekBaseUrl: read("DEEPSEEK_BASE_URL"),
       anthropicApiKey: anthropicKey,
       openaiApiKey: openaiKey,
       openaiBaseUrl: read("OPENAI_BASE_URL"),
       ollamaBaseUrl: ollamaBaseUrl ?? "http://localhost:11434",
-      model:
-        llmProvider === "deepseek"
-          ? deepseekModel
-          : llmProvider === "anthropic"
-            ? anthropicModel
-            : llmProvider === "ollama"
-              ? ollamaModel
-              : defaultModel,
-      visionModel:
-        llmProvider === "deepseek"
-          ? (read("DEEPSEEK_VISION_MODEL") ?? "deepseek-v4-flash-vision-exp")
-          : llmProvider === "anthropic"
-            ? (read("ANTHROPIC_VISION_MODEL") ?? anthropicModel)
-            : llmProvider === "ollama"
-              ? (read("OLLAMA_VISION_MODEL") ?? "llava")
-              : (read("VISION_MODEL") ?? defaultModel),
+      model: modelFor(llmProvider, textModels),
+      visionProvider,
+      visionModel: modelFor(visionProvider, visionModels),
+    },
+
+    memory: {
+      supabaseUrl: supabaseUrl?.replace(/\/+$/, ""),
+      serviceKey: supabaseServiceKey,
+      enabled: Boolean(supabaseUrl && supabaseServiceKey),
     },
 
     search: {
@@ -98,7 +142,7 @@ export function getEnv() {
 
     tts: {
       elevenLabsApiKey: read("ELEVENLABS_API_KEY"),
-      elevenLabsVoiceId: read("ELEVENLABS_VOICE_ID"),
+      elevenLabsVoiceId: read("ELEVENLABS_VOICE_ID") ?? DEFAULT_ELEVENLABS_VOICE_ID,
       elevenLabsModelId: read("ELEVENLABS_MODEL_ID") ?? "eleven_multilingual_v2",
       edgeVoiceEn: read("EDGE_TTS_VOICE_EN") ?? "en-US-JennyNeural",
       edgeVoiceKo: read("EDGE_TTS_VOICE_KO") ?? "ko-KR-SunHiNeural",

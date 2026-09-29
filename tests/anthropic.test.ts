@@ -141,7 +141,12 @@ describe("/api/status with Claude", () => {
     const res = await statusGET();
     const status = (await res.json()) as { llm: unknown };
 
-    expect(status.llm).toEqual({ provider: "anthropic", model: "claude-opus-5", visionModel: "claude-opus-5" });
+    expect(status.llm).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      visionProvider: "anthropic",
+      visionModel: "claude-opus-5",
+    });
     expect(JSON.stringify(status)).not.toContain("sk-ant-test");
   });
 });

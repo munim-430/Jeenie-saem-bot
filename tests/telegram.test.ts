@@ -119,10 +119,11 @@ beforeEach(() => {
   vi.stubEnv("TELEGRAM_BOT_TOKEN", TOKEN);
   vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", String(ADMIN));
   vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "");
-  for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
+  for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
     vi.stubEnv(name, "");
   }
   for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE", "JEANNIE_ACCESS_KEY"]) vi.stubEnv(name, "");
+  for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) vi.stubEnv(name, "");
   // Unset, not blank: @ai-sdk/openai reads a blank OPENAI_BASE_URL itself and rejects it.
   for (const name of ["OPENAI_BASE_URL", "DEFAULT_MODEL", "VERCEL"]) vi.stubEnv(name, undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -250,6 +251,7 @@ describe("handleTelegramUpdate", () => {
     const tg = fakeTelegram();
     for (const text of ["/start", "/help", "/status", "/frobnicate"]) await handleTelegramUpdate(textUpdate(ADMIN, text));
     const [start, help, status, unknown] = tg.sent().map((p) => String(p.text));
+    expect(start).toMatch(/^(?:좋은 (?:아침|오후|저녁)입니다|늦은 시간까지 수고 많으십니다), (?:부장님|사장님|sir)\. /);
     expect(start).toContain("I'm Jeannie");
     expect(start).toContain("안녕하세요");
     expect(help).toContain("/report");

@@ -1,12 +1,16 @@
 // Orchestrator (Jeannie Core): routes each message to one specialist agent and
 // returns its answer as a byte stream plus the metadata the HUD shows in
-// headers. Routing order: IoT → Hangeul → vision → live search → core.
+// headers. Routing order: pending audit approval → IoT → audit → Hangeul →
+// vision → live search → core. Every reply gets one weighted honorific, and the
+// LLM agents get the recalled Supabase memory in their system prompt.
 // The returned stream never errors: provider failures become a short line in
 // the user's language. Runs on Edge and Node.js.
 
 import { generateText, isStepCount, streamText, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { ownSignal } from "../abort";
 import { getEnv } from "../env";
-import type { AgentId, ChatMessage, LangMode, LlmProvider, ResolvedLang, SourceLink } from "../types";
+import { recallMemory } from "../memory/store";
+import type { AgentId, ChatMessage, Honorific, LangMode, LlmProvider, ResolvedLang, SourceLink } from "../types";
 import { resolveLanguage, truncate } from "../utils";
 import {
   formatHangeulReport,
@@ -16,8 +20,19 @@ import {
   isHangeulQuery,
   isHangeulStatusQuery,
 } from "./hangeul-bridge";
+import {
+  approvalRequestFooter,
+  executionConfirmation,
+  extractRecommendations,
+  isApproval,
+  isMistakeAudit,
+  isRejection,
+  pendingAudit,
+  rejectionAcknowledgement,
+} from "./audit-flow";
+import { pickHonorific } from "./etiquette";
 import { checkIoTQuery, IOT_RESPONSE } from "./iot-interceptor";
-import { getLanguageModel, type ResolvedModel } from "./llm";
+import { getLanguageModel, supportsTools, type ResolvedModel } from "./llm";
 import { buildSystemPrompt } from "./persona";
 import {
   contextualSearchQuery,
@@ -78,6 +93,7 @@ export function routeQuery(input: {
   }
   const previous = input.previous ?? [];
   const lang = resolveLanguage(input.lang, input.text, previous);
+  if (!input.hasImage && isMistakeAudit(input.text)) return { agent: "audit", lang, reason: "mistake audit request" };
   if (isHangeulQuery(input.text) && (!input.hasImage || portalOverImage(input.text))) {
     return { agent: "hangeul", lang, reason: "Hangeul admin portal request" };
   }
@@ -99,14 +115,14 @@ export function offlineMessage(lang: ResolvedLang, kind: "text" | "vision" = "te
   if (kind === "vision") {
     return localized(
       lang,
-      "Image analysis needs a vision-capable model, and none is connected. Set OPENAI_API_KEY, or OLLAMA_BASE_URL with a vision model such as llava, and I'll take a look.",
-      "이미지 분석에는 비전 모델이 필요한데 지금은 연결된 모델이 없어요. OPENAI_API_KEY를 설정하거나 OLLAMA_BASE_URL과 llava 같은 비전 모델을 설정해 주시면 바로 분석할게요.",
+      "Image analysis needs a vision-capable model, and none is connected (DeepSeek can't read images). Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or OLLAMA_BASE_URL with a vision model such as llava, and I'll take a look.",
+      "이미지 분석에는 비전 모델이 필요한데 지금은 연결된 모델이 없어요 (DeepSeek은 이미지를 읽지 못해요). ANTHROPIC_API_KEY나 OPENAI_API_KEY를 설정하거나 OLLAMA_BASE_URL과 llava 같은 비전 모델을 설정해 주시면 바로 분석할게요.",
     );
   }
   return localized(
     lang,
-    "I'm running in offline mode: no language model is connected. Set OPENAI_API_KEY (or OLLAMA_BASE_URL for a local model) and I'll be fully online. Smart-home commands, live search and Hangeul reports still work.",
-    "지금은 오프라인 모드예요. 연결된 언어 모델이 없어요. OPENAI_API_KEY(로컬 모델은 OLLAMA_BASE_URL)를 설정해 주시면 바로 온라인으로 전환할게요. 스마트홈 명령, 실시간 검색, 한글 리포트는 계속 사용할 수 있어요.",
+    "I'm running in offline mode: no language model is connected. Set DEEPSEEK_API_KEY (or OPENAI_API_KEY, or OLLAMA_BASE_URL for a local model) and I'll be fully online. Smart-home commands, live search and Hangeul reports still work.",
+    "지금은 오프라인 모드예요. 연결된 언어 모델이 없어요. DEEPSEEK_API_KEY(또는 OPENAI_API_KEY, 로컬 모델은 OLLAMA_BASE_URL)를 설정해 주시면 바로 온라인으로 전환할게요. 스마트홈 명령, 실시간 검색, 한글 리포트는 계속 사용할 수 있어요.",
   );
 }
 
@@ -114,8 +130,8 @@ export function offlineMessage(lang: ResolvedLang, kind: "text" | "vision" = "te
 export function offlineSearchFailedMessage(lang: ResolvedLang): string {
   return localized(
     lang,
-    "Live search came back empty just now (the keyless search fallback is probably rate-limiting me), and no language model is connected to answer from memory. Try again in a minute. For reliable answers, set TAVILY_API_KEY for search and OPENAI_API_KEY (or OLLAMA_BASE_URL) for the language model.",
-    "방금 실시간 검색 결과를 받지 못했어요 (키 없이 쓰는 검색이 잠시 요청을 제한하고 있는 것 같아요). 기억만으로 답할 언어 모델도 연결되어 있지 않아요. 1분쯤 뒤에 다시 시도해 주세요. 안정적으로 쓰려면 검색용 TAVILY_API_KEY와 언어 모델용 OPENAI_API_KEY(또는 OLLAMA_BASE_URL)를 설정해 주세요.",
+    "Live search came back empty just now (the keyless search fallback is probably rate-limiting me), and no language model is connected to answer from memory. Try again in a minute. For reliable answers, set TAVILY_API_KEY for search and DEEPSEEK_API_KEY (or OPENAI_API_KEY / OLLAMA_BASE_URL) for the language model.",
+    "방금 실시간 검색 결과를 받지 못했어요 (키 없이 쓰는 검색이 잠시 요청을 제한하고 있는 것 같아요). 기억만으로 답할 언어 모델도 연결되어 있지 않아요. 1분쯤 뒤에 다시 시도해 주세요. 안정적으로 쓰려면 검색용 TAVILY_API_KEY와 언어 모델용 DEEPSEEK_API_KEY(또는 OPENAI_API_KEY / OLLAMA_BASE_URL)를 설정해 주세요.",
   );
 }
 
@@ -296,7 +312,9 @@ function llmStream(options: {
         ? ({ stepNumber }) => (stepNumber >= MAX_TOOL_STEPS - 1 ? { toolChoice: "none" } : undefined)
         : undefined,
       providerOptions: options.resolved.providerOptions,
-      abortSignal: options.signal ?? undefined,
+      // Our own signal: the SDK merges it with its timeouts via AbortSignal.any, which
+      // Vercel's Edge runtime refuses for the host's request signal.
+      abortSignal: ownSignal(options.signal),
       maxRetries: 1,
       timeout: { firstChunkMs: 45_000, chunkMs: 30_000 },
       // Log a short reason only: SDK errors carry request bodies (the user's messages).
@@ -325,12 +343,20 @@ export interface OrchestratorContext {
   model?: LanguageModel;
   /** Provider label for `model`; defaults to the configured provider, else "openai". */
   provider?: Exclude<LlmProvider, "none">;
+  /** Fixes the honorific instead of drawing one (tests, callers that already greeted). */
+  honorific?: Honorific;
+  /** Memory lookup override (tests); defaults to Supabase recall. */
+  recall?: (query: string, signal?: AbortSignal | null) => Promise<string>;
+  /** Called when an audit approval or rejection is decided, e.g. to log it. */
+  onAuditDecision?: (decision: "approved" | "rejected", items: string[]) => void;
 }
 
 export interface OrchestratorResult {
   agent: AgentId;
   lang: ResolvedLang;
   provider: LlmProvider;
+  /** How Jeannie addressed the user in this reply. */
+  honorific: Honorific;
   sources: SourceLink[];
   stream: ReadableStream<Uint8Array>;
 }
@@ -340,6 +366,9 @@ interface Turn {
   image: string | null;
   history: ChatMessage[];
   lang: ResolvedLang;
+  honorific: Honorific;
+  /** Recalled memory block ("" when none); started early so it overlaps other work. */
+  memory: Promise<string>;
   ctx: OrchestratorContext;
 }
 
@@ -355,10 +384,11 @@ function resolveModel(kind: "text" | "vision", ctx: OrchestratorContext): Resolv
 function fixed(
   agent: AgentId,
   lang: ResolvedLang,
+  honorific: Honorific,
   text: string,
   sources: SourceLink[] = [],
 ): OrchestratorResult {
-  return { agent, lang, provider: "none", sources, stream: textStreamOf(text) };
+  return { agent, lang, provider: "none", honorific, sources, stream: textStreamOf(text) };
 }
 
 async function runHangeul(turn: Turn): Promise<OrchestratorResult> {
@@ -368,18 +398,19 @@ async function runHangeul(turn: Turn): Promise<OrchestratorResult> {
   const plain = "metrics" in data ? formatHangeulReport(data, turn.lang) : formatHangeulStatus(data, turn.lang);
 
   const resolved = resolveModel("text", turn.ctx);
-  if (!resolved) return fixed("hangeul", turn.lang, plain);
+  if (!resolved) return fixed("hangeul", turn.lang, turn.honorific, plain);
 
   const context = `Hangeul portal ${wantsStatus ? "status check" : "report"} (JSON):\n${JSON.stringify(data, null, 2)}`;
+  const memory = await turn.memory;
   const stream = llmStream({
     resolved,
-    system: buildSystemPrompt({ agent: "hangeul", lang: turn.lang, context }),
+    system: buildSystemPrompt({ agent: "hangeul", lang: turn.lang, honorific: turn.honorific, memory, context }),
     messages: toModelMessages(turn.history, { lang: turn.lang }),
     lang: turn.lang,
     signal: turn.ctx.signal,
     fallbackText: plain,
   });
-  return { agent: "hangeul", lang: turn.lang, provider: resolved.provider, sources: [], stream };
+  return { agent: "hangeul", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
 }
 
 // "What's the population there?" may lean on the conversation without being short.
@@ -421,9 +452,7 @@ async function searchQueryFor(turn: Turn, resolved: ResolvedModel | null, signal
       // Claude thinks adaptively and thinking counts toward the cap, so give it
       // room and ask for the lightest effort on this one-line task.
       maxOutputTokens: claude ? 1_024 : 60,
-      providerOptions: claude
-        ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } }
-        : resolved.providerOptions,
+      providerOptions: claude ? { anthropic: { ...resolved.providerOptions?.anthropic, effort: "low" } } : undefined,
       maxRetries: 0,
       abortSignal: withTimeout(QUERY_REWRITE_TIMEOUT_MS, signal),
     });
@@ -444,41 +473,48 @@ async function runSearch(turn: Turn): Promise<OrchestratorResult> {
   const briefing = formatSearchBriefing(res);
   const plain = offlineSearchText(briefing, turn.lang);
 
-  if (!resolved) return fixed("search", turn.lang, plain, sources);
+  if (!resolved) return fixed("search", turn.lang, turn.honorific, plain, sources);
 
+  const memory = await turn.memory;
   const stream = llmStream({
     resolved,
-    system: buildSystemPrompt({ agent: "search", lang: turn.lang, context: `${briefing}\n\n${SEARCH_RELEVANCE_NOTE}` }),
+    system: buildSystemPrompt({
+      agent: "search",
+      lang: turn.lang,
+      honorific: turn.honorific,
+      memory,
+      context: `${briefing}\n\n${SEARCH_RELEVANCE_NOTE}`,
+    }),
     messages: toModelMessages(turn.history, { lang: turn.lang }),
     lang: turn.lang,
     signal: turn.ctx.signal,
     fallbackText: plain,
   });
-  return { agent: "search", lang: turn.lang, provider: resolved.provider, sources, stream };
+  return { agent: "search", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources, stream };
 }
 
 function runVision(turn: Turn): OrchestratorResult {
   const resolved = resolveModel("vision", turn.ctx);
-  if (!resolved) return fixed("offline", turn.lang, offlineMessage(turn.lang, "vision"));
+  if (!resolved) return fixed("offline", turn.lang, turn.honorific, offlineMessage(turn.lang, "vision"));
   const stream = llmStream({
     resolved,
-    system: buildSystemPrompt({ agent: "vision", lang: turn.lang }),
+    system: buildSystemPrompt({ agent: "vision", lang: turn.lang, honorific: turn.honorific }),
     messages: toModelMessages(turn.history, { latestImage: turn.image, lang: turn.lang }),
     lang: turn.lang,
     signal: turn.ctx.signal,
   });
-  return { agent: "vision", lang: turn.lang, provider: resolved.provider, sources: [], stream };
+  return { agent: "vision", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
 }
 
-function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): OrchestratorResult {
+async function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Promise<OrchestratorResult> {
   const resolved = resolveModel("text", turn.ctx);
   if (!resolved) {
     const text = options.searchFailed ? offlineSearchFailedMessage(turn.lang) : offlineMessage(turn.lang);
-    return fixed("offline", turn.lang, text);
+    return fixed("offline", turn.lang, turn.honorific, text);
   }
 
-  // Tool calling is reliable on DeepSeek, Claude and OpenAI; many Ollama models ignore or garble tools.
-  const useTools = resolved.provider !== "ollama" && !options.searchFailed;
+  // Tool calling is reliable on DeepSeek chat, Claude and OpenAI; not on deepseek-reasoner or most Ollama models.
+  const useTools = supportsTools(resolved) && !options.searchFailed;
   const found: SourceLink[] = [];
   let context: string | undefined;
   if (options.searchFailed) {
@@ -487,16 +523,55 @@ function runCore(turn: Turn, options: { searchFailed?: boolean } = {}): Orchestr
     context = "The webSearch tool is not available with this model. If an answer needs live data, say so briefly.";
   }
 
+  const memory = await turn.memory;
   const stream = llmStream({
     resolved,
-    system: buildSystemPrompt({ agent: "core", lang: turn.lang, context }),
+    system: buildSystemPrompt({ agent: "core", lang: turn.lang, honorific: turn.honorific, memory, context }),
     messages: toModelMessages(turn.history, { lang: turn.lang }),
     lang: turn.lang,
     signal: turn.ctx.signal,
     tools: useTools ? { webSearch: createSearchTool((sources) => found.push(...sources)) } : undefined,
     footer: (answer) => sourcesFooter(found, answer, turn.lang),
   });
-  return { agent: "core", lang: turn.lang, provider: resolved.provider, sources: [], stream };
+  return { agent: "core", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
+}
+
+function auditNeedsModelLine(lang: ResolvedLang): string {
+  return localized(
+    lang,
+    "A mistake audit needs my language model, and none is connected. Set DEEPSEEK_API_KEY and ask me again.",
+    "실수 점검에는 언어 모델이 필요한데 지금은 연결되어 있지 않아요. DEEPSEEK_API_KEY를 설정한 뒤 다시 요청해 주세요.",
+  );
+}
+
+/** Mistake audit: framed findings and recommendations, always ending with the approval request. */
+async function runAudit(turn: Turn): Promise<OrchestratorResult> {
+  const resolved = resolveModel("text", turn.ctx);
+  if (!resolved) return fixed("offline", turn.lang, turn.honorific, auditNeedsModelLine(turn.lang));
+  const memory = await turn.memory;
+  const stream = llmStream({
+    resolved,
+    system: buildSystemPrompt({ agent: "audit", lang: turn.lang, honorific: turn.honorific, memory }),
+    messages: toModelMessages(turn.history, { lang: turn.lang }),
+    lang: turn.lang,
+    signal: turn.ctx.signal,
+    footer: approvalRequestFooter,
+  });
+  return { agent: "audit", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
+}
+
+/** An approval or rejection answering a pending audit, handled without the LLM; null otherwise. */
+function answerPendingAudit(history: ChatMessage[], text: string, input: OrchestratorInput, honorific: Honorific, ctx: OrchestratorContext): OrchestratorResult | null {
+  const pending = pendingAudit(history);
+  if (pending === null) return null;
+  const approved = isApproval(text);
+  if (!approved && !isRejection(text)) return null;
+
+  const lang = resolveLanguage(input.lang, text, earlierUserTexts(history));
+  const items = extractRecommendations(pending);
+  ctx.onAuditDecision?.(approved ? "approved" : "rejected", items);
+  const reply = approved ? executionConfirmation(lang, honorific, items) : rejectionAcknowledgement(lang, honorific);
+  return fixed("audit", lang, honorific, reply);
 }
 
 /** Text of the user turns before the latest one, oldest first. */
@@ -512,21 +587,38 @@ function prepareHistory(messages: ChatMessage[]): ChatMessage[] {
   return window.filter((m, i) => i === window.length - 1 || m.content.trim() !== "" || Boolean(m.image));
 }
 
+const MEMORY_AGENTS: ReadonlySet<AgentId> = new Set(["core", "search", "hangeul", "audit"]);
+
 export async function runOrchestrator(input: OrchestratorInput, ctx: OrchestratorContext): Promise<OrchestratorResult> {
   const history = prepareHistory(input.messages);
   const last = history.at(-1);
   const text = last?.role === "user" ? last.content : "";
   const image = input.image ?? (last?.role === "user" ? last.image : null) ?? null;
+  const honorific = ctx.honorific ?? pickHonorific();
+
+  if (!image) {
+    const decided = answerPendingAudit(history, text, input, honorific, ctx);
+    if (decided) return decided;
+  }
+
   const route = routeQuery({ text, hasImage: Boolean(image), lang: input.lang, previous: earlierUserTexts(history) });
 
   if (route.agent === "iot") {
     // Hard rule: fixed sentence, no network, no LLM.
-    return fixed("iot", route.lang, checkIoTQuery(text, input.lang) ?? IOT_RESPONSE.en);
+    return fixed("iot", route.lang, honorific, checkIoTQuery(text, input.lang) ?? IOT_RESPONSE.en);
   }
 
-  const turn: Turn = { text, image, history, lang: route.lang, ctx };
+  // Memory holds the operator's personal notes: only callers that proved a secret
+  // (HUD access key, Telegram admin chat) get it, like live Hangeul data.
+  const recall = ctx.recall ?? recallMemory;
+  const memory = ctx.trusted && MEMORY_AGENTS.has(route.agent)
+    ? recall(text, ctx.signal).catch(() => "")
+    : Promise.resolve("");
+  const turn: Turn = { text, image, history, lang: route.lang, honorific, memory, ctx };
   try {
     switch (route.agent) {
+      case "audit":
+        return await runAudit(turn);
       case "hangeul":
         return await runHangeul(turn);
       case "search":
@@ -534,11 +626,11 @@ export async function runOrchestrator(input: OrchestratorInput, ctx: Orchestrato
       case "vision":
         return runVision(turn);
       default:
-        return runCore(turn);
+        return await runCore(turn);
     }
   } catch (error) {
     console.error(`[jeannie] ${route.agent} agent failed: ${errorSummary(error)}`);
-    return fixed(route.agent, route.lang, unreachableLine(route.lang));
+    return fixed(route.agent, route.lang, honorific, unreachableLine(route.lang));
   }
 }
 

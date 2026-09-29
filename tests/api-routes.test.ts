@@ -30,6 +30,8 @@ const ENV_NAMES = [
   ...Object.keys(SECRETS),
   "DEEPSEEK_API_KEY",
   "ANTHROPIC_API_KEY",
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
   "LLM_PROVIDER",
   "OLLAMA_BASE_URL",
   "OPENAI_BASE_URL",
@@ -227,7 +229,8 @@ describe("GET /api/status", () => {
   it("shows an offline LLM and mock Hangeul when nothing is configured", async () => {
     const body = (await status().json()) as SystemStatus;
     expect(body.accessKeyRequired).toBe(false);
-    expect(body.llm).toEqual({ provider: "none", model: null, visionModel: null });
+    expect(body.llm).toEqual({ provider: "none", model: null, visionProvider: "none", visionModel: null });
+    expect(body.memory).toEqual({ configured: false });
     expect(body.search.providers).toEqual(["duckduckgo"]);
     expect(body.hangeul.mode).toBe("mock");
     expect(body.telegram.configured).toBe(false);

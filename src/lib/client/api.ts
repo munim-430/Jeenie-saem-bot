@@ -12,7 +12,9 @@ import {
   type ChatRequestBody,
   type HangeulStatus,
   type LlmProvider,
+  type MemoryDocument,
   type ResolvedLang,
+  type SessionGreeting,
   type SourceLink,
   type SystemStatus,
   type TtsEngine,
@@ -26,6 +28,7 @@ const STATUS_TIMEOUT_MS = 8_000;
 const CHAT_TIMEOUT_MS = 180_000; // covers the whole streamed answer, not just the headers
 const TTS_TIMEOUT_MS = 30_000;
 const HANGEUL_TIMEOUT_MS = 15_000;
+const MEMORY_TIMEOUT_MS = 30_000;
 
 // ── Access key storage ───────────────────────────────────────────────────────
 // Storage can throw (private mode, blocked site data), so every access is guarded,
@@ -135,15 +138,18 @@ function authHeaders(extra?: Record<string, string>): Headers {
 
 async function request(
   path: string,
-  init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal; timeoutMs: number },
+  init: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown; signal?: AbortSignal; timeoutMs: number },
 ): Promise<Response> {
   let res: Response;
   try {
-    const headers = authHeaders(init.body === undefined ? undefined : { "content-type": "application/json" });
+    // FormData sets its own multipart content type (with the boundary).
+    const form = typeof FormData !== "undefined" && init.body instanceof FormData;
+    const json = init.body !== undefined && !form;
+    const headers = authHeaders(json ? { "content-type": "application/json" } : undefined);
     res = await fetch(path, {
       method: init.method ?? "GET",
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),
       signal: withTimeout(init.timeoutMs, init.signal),
       cache: "no-store",
     });
@@ -174,6 +180,50 @@ export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemSta
   }
 }
 
+// ── Session greeting ────────────────────────────────────────────────────────
+
+export async function fetchSessionGreeting(signal?: AbortSignal): Promise<SessionGreeting> {
+  const res = await request("/api/session", { signal, timeoutMs: STATUS_TIMEOUT_MS });
+  try {
+    return (await res.json()) as SessionGreeting;
+  } catch {
+    throw new ApiRequestError(res.status, "invalid_response", "Session greeting returned malformed data.");
+  }
+}
+
+// ── Memory ──────────────────────────────────────────────────────────────────
+
+export interface MemoryUploadResult {
+  title: string;
+  kind: "markdown" | "jsonl";
+  chunks: number;
+  issues: { line: number; message: string }[];
+}
+
+export async function listMemory(signal?: AbortSignal): Promise<MemoryDocument[]> {
+  const res = await request("/api/memory", { signal, timeoutMs: MEMORY_TIMEOUT_MS });
+  const body = (await res.json().catch(() => null)) as { documents?: MemoryDocument[] } | null;
+  return Array.isArray(body?.documents) ? body.documents : [];
+}
+
+export async function uploadMemory(file: File, pinned: boolean): Promise<MemoryUploadResult> {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("pinned", String(pinned));
+  const res = await request("/api/memory", { method: "POST", body: form, timeoutMs: MEMORY_TIMEOUT_MS });
+  const body = (await res.json().catch(() => null)) as { document?: MemoryUploadResult } | null;
+  if (!body?.document) throw new ApiRequestError(res.status, "invalid_response", "Memory upload returned malformed data.");
+  return body.document;
+}
+
+export async function setMemoryPinned(id: string, pinned: boolean): Promise<void> {
+  await request(`/api/memory?id=${encodeURIComponent(id)}`, { method: "PATCH", body: { pinned }, timeoutMs: MEMORY_TIMEOUT_MS });
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  await request(`/api/memory?id=${encodeURIComponent(id)}`, { method: "DELETE", timeoutMs: MEMORY_TIMEOUT_MS });
+}
+
 // ── Chat ────────────────────────────────────────────────────────────────────
 
 export interface ChatStreamMeta {
@@ -183,7 +233,7 @@ export interface ChatStreamMeta {
   sources: SourceLink[];
 }
 
-const AGENTS: readonly AgentId[] = ["iot", "search", "vision", "hangeul", "core", "offline"];
+const AGENTS: readonly AgentId[] = ["iot", "audit", "search", "vision", "hangeul", "core", "offline"];
 const LANGS: readonly ResolvedLang[] = ["en", "ko", "bilingual"];
 const PROVIDERS: readonly LlmProvider[] = ["deepseek", "anthropic", "openai", "ollama", "none"];
 
