@@ -1,6 +1,8 @@
 # Spec: Hangeul context in Jeannie (Supabase + offline PWA)
 
-Status: needs-triage (draft, awaiting owner approval; no code until approved)
+Status: ready-for-human (approved by the owner on 30 Sep 2026; tickets 3-7 are implemented on branch
+saem/hangeul-context-reader: 3, 4 and 5 are done, 6 and 7 are the PWA work in progress; ticket 8 is the owner's live
+check. The tickets are split into [`issues/`](issues/).)
 
 Companion: [`hangeul-bot-prompt.md`](hangeul-bot-prompt.md) is the prompt that makes Hangeul BOT publish
 its data. Both files share **one data contract** (the tables below). A change to one means a change to the other.
@@ -176,7 +178,7 @@ device has its own model loaded.
    (OCR page hit), "What changed since this morning?". Each answer shows code-built figures and an as-of time.
 4. Delete test: a record removed by the bot disappears from the phone after the next delta.
 
-## 10. Proposed tickets (to be split into `.scratch/hangeul-cloud-context/issues/` after approval)
+## 10. Tickets (split into [`issues/`](issues/), one file each)
 
 1. Apply the memory migrations to the new project; point Vercel at it; re-upload memory files.
 2. `hangeul_context` migration (tables, trigger, RPCs, grants) + SQL tests.
@@ -188,3 +190,11 @@ device has its own model loaded.
 8. Live verification with the owner after the Hangeul BOT backfill.
 
 ## Comments
+
+- 1 Oct 2026: approved by the owner on 30 Sep and built on `saem/hangeul-context-reader`. Two kinds beyond the
+  tables above are published and used: `doc_check` (one verdict per passport) and `consultant_performance` (the
+  portal's Consultant Performance page: keys `<period>|<first ISO day>|<name>`, scope `<period>|<first ISO day>`,
+  and a `|summary` record with the tiles "Consultancies done", "Files opened", "Conversion (file open)", "Docs ready"
+  and the top performer). The owner's question "how many consultancies were closed today?" is answered from that
+  summary and the day's consultation rows (ticket 5). The source of truth for every kind is the bot's
+  `src/cloud/records.py` and the pack's `13_SUPABASE_PUBLISHING.md`.
