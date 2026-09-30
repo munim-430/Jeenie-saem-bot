@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as chat } from "@/app/api/chat/route";
-import { GET as hangeulGet, POST as hangeulPost } from "@/app/api/hangeul/route";
+import { GET as hangeulGet } from "@/app/api/hangeul/route";
 import { GET as searchGet, POST as searchPost } from "@/app/api/search/route";
-import { GET as status } from "@/app/api/status/route";
+import { GET as statusGet } from "@/app/api/status/route";
 import { resetSearchState } from "@/lib/agents/search-agent";
-import type { ChatMessage, HangeulReport, SearchResponse, SourceLink, SystemStatus } from "@/lib/types";
+import type { ChatMessage, SearchResponse, SourceLink, SystemStatus } from "@/lib/types";
 import { decodeHeaderJson } from "@/lib/utils";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -19,9 +19,8 @@ const SECRETS: Record<string, string> = {
   TELEGRAM_BOT_TOKEN: "999:telegram-secret",
   TELEGRAM_ADMIN_CHAT_ID: "31337",
   TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
-  HANGEUL_BASE_URL: "https://portal-secret.example/admin",
-  HANGEUL_USERNAME: "portal-user-secret",
-  HANGEUL_PASSWORD: "portal-password-secret",
+  SUPABASE_URL: "https://supabase-secret.example",
+  SUPABASE_SECRET_KEY: "sb_secret_supabase_value",
   JEANNIE_ACCESS_KEY: "access-key-secret",
   CRON_SECRET: "cron-secret-value",
 };
@@ -30,15 +29,16 @@ const ENV_NAMES = [
   ...Object.keys(SECRETS),
   "DEEPSEEK_API_KEY",
   "ANTHROPIC_API_KEY",
-  "SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "LLM_PROVIDER",
   "OLLAMA_BASE_URL",
   "OPENAI_BASE_URL",
   "MOCK_MODE",
-  "HANGEUL_REPORT_PATH",
-  "HANGEUL_STATUS_PATH",
 ];
+
+/** GET /api/status, optionally with the access key. */
+const status = (key?: string) => statusGet(request("/api/status", { headers: key ? { "x-jeannie-key": key } : {} }));
 
 function request(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Request {
   const { method = "GET", body, headers = {} } = init;
@@ -69,9 +69,6 @@ function stubFetch() {
     urls.push(url);
     if (url.startsWith("https://api.duckduckgo.com/")) return new Response(JSON.stringify(DDG_INSTANT), { status: 202 });
     if (url.startsWith("https://api.telegram.org/")) return Response.json({ ok: true, result: { message_id: 1 } });
-    if (url.startsWith("https://portal-secret.example/")) {
-      return Response.json({ title: "Live ops", metrics: [{ label: "Students", value: 250 }], highlights: ["All good"] });
-    }
     return new Response("nope", { status: 500 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -210,7 +207,8 @@ describe("POST /api/chat", () => {
 describe("GET /api/status", () => {
   it("reports capabilities without secrets and without requiring the access key", async () => {
     for (const [name, value] of Object.entries(SECRETS)) vi.stubEnv(name, value);
-    const res = status();
+    const { fetchMock } = stubFetch();
+    const res = await status();
     expect(res.status).toBe(200);
     const raw = await res.text();
     for (const secret of Object.values(SECRETS)) expect(raw).not.toContain(secret);
@@ -222,28 +220,28 @@ describe("GET /api/status", () => {
       search: { providers: ["tavily", "google", "duckduckgo"] },
       voice: { engines: ["elevenlabs", "edge", "browser"] },
       telegram: { configured: true },
-      hangeul: { mode: "live" },
+      // Without the key, no volumes: Supabase is not even asked.
+      hangeul: { configured: true, records: null, lastRuns: null },
     });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows an offline LLM and mock Hangeul when nothing is configured", async () => {
-    const body = (await status().json()) as SystemStatus;
+  it("shows an offline LLM and unlinked Hangeul data when nothing is configured", async () => {
+    const body = (await (await status()).json()) as SystemStatus;
     expect(body.accessKeyRequired).toBe(false);
     expect(body.llm).toEqual({ provider: "none", model: null, visionProvider: "none", visionModel: null });
     expect(body.memory).toEqual({ configured: false });
     expect(body.search.providers).toEqual(["duckduckgo"]);
-    expect(body.hangeul.mode).toBe("mock");
+    expect(body.hangeul).toEqual({ configured: false, records: null, lastRuns: null });
     expect(body.telegram.configured).toBe(false);
   });
 
-  it("reports Hangeul as live only when the HUD can actually get live data", async () => {
-    for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD"]) vi.stubEnv(name, SECRETS[name]);
-    // Configured portal, open API: /api/hangeul and /api/chat serve demo data to every caller.
-    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("mock");
-    vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
-    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("live");
-    vi.stubEnv("MOCK_MODE", "true");
-    expect(((await status().json()) as SystemStatus).hangeul.mode).toBe("mock");
+  it("an open deployment (no access key) never shows Hangeul volumes", async () => {
+    vi.stubEnv("SUPABASE_URL", SECRETS.SUPABASE_URL);
+    vi.stubEnv("SUPABASE_SECRET_KEY", SECRETS.SUPABASE_SECRET_KEY);
+    const { fetchMock } = stubFetch();
+    expect(((await (await status("anything")).json()) as SystemStatus).hangeul).toEqual({ configured: true, records: null, lastRuns: null });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -275,74 +273,26 @@ describe("/api/search", () => {
   });
 });
 
-describe("/api/hangeul", () => {
-  function configurePortal() {
-    for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD"]) vi.stubEnv(name, SECRETS[name]);
-  }
-
-  it("serves mock data to an open (untrusted) API even with the portal configured", async () => {
-    configurePortal();
+describe("/api/hangeul (the portal bridge is gone)", () => {
+  it("never serves demo data: an open API gets 403, and the old actions are just the data status", async () => {
     const { urls } = stubFetch();
-    const report = (await (await hangeulGet(request("/api/hangeul?action=report"))).json()) as { report: HangeulReport };
-    expect(report.report.source).toBe("mock");
-    expect(report.report.note).toMatch(/trusted/);
-    const statusBody = (await (await hangeulGet(request("/api/hangeul?action=status"))).json()) as { status: { source: string } };
-    expect(statusBody.status.source).toBe("mock");
+    for (const path of ["/api/hangeul", "/api/hangeul?action=report", "/api/hangeul?action=status"]) {
+      const res = await hangeulGet(request(path));
+      expect(res.status).toBe(403);
+      const raw = await res.text();
+      expect(raw).not.toMatch(/demo|mock/i);
+    }
     expect(urls).toEqual([]);
-    expect((await hangeulGet(request("/api/hangeul?action=delete"))).status).toBe(400);
   });
 
-  it("serves live data to callers with the access key", async () => {
-    configurePortal();
-    vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
-    stubFetch();
-    expect((await hangeulGet(request("/api/hangeul?action=report"))).status).toBe(401);
-    const res = await hangeulPost(
-      request("/api/hangeul", { method: "POST", body: { action: "report" }, headers: { "x-jeannie-key": SECRETS.JEANNIE_ACCESS_KEY } }),
-    );
-    const body = (await res.json()) as { report: HangeulReport };
-    expect(body.report).toMatchObject({ source: "live", title: "Live ops", metrics: [{ label: "Students", value: 250 }] });
-  });
-
-  it("cron GET without action builds the daily report and pushes it to Telegram", async () => {
+  it("the old daily cron call pushes nothing to Telegram", async () => {
     vi.stubEnv("CRON_SECRET", SECRETS.CRON_SECRET);
     vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
     vi.stubEnv("TELEGRAM_BOT_TOKEN", SECRETS.TELEGRAM_BOT_TOKEN);
     vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", SECRETS.TELEGRAM_ADMIN_CHAT_ID);
     const { fetchMock } = stubFetch();
-
     const res = await hangeulGet(request("/api/hangeul", { headers: { authorization: `Bearer ${SECRETS.CRON_SECRET}` } }));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { report: HangeulReport; delivered: boolean };
-    expect(body.delivered).toBe(true);
-    expect(body.report.source).toBe("mock"); // portal not configured
-    const telegramCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/sendMessage"));
-    const payload = JSON.parse(String((telegramCall?.[1] as RequestInit).body)) as { chat_id: string; text: string };
-    expect(payload.chat_id).toBe(SECRETS.TELEGRAM_ADMIN_CHAT_ID);
-    expect(payload.text).toContain("Hangeul daily operations report (demo data)");
-    expect(payload.text).toContain("한글 학원 일일 운영 보고서");
-  });
-
-  it("cron without Telegram reports delivered: false; a bare GET without cron needs the access key", async () => {
-    vi.stubEnv("CRON_SECRET", SECRETS.CRON_SECRET);
-    vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
-    stubFetch();
-    const cron = await hangeulGet(request("/api/hangeul", { headers: { authorization: `Bearer ${SECRETS.CRON_SECRET}` } }));
-    expect(((await cron.json()) as { delivered: boolean }).delivered).toBe(false);
-    expect((await hangeulGet(request("/api/hangeul", { headers: { authorization: "Bearer wrong" } }))).status).toBe(401);
-  });
-
-  it("POST notify requires a trusted caller", async () => {
-    stubFetch();
-    const open = await hangeulPost(request("/api/hangeul", { method: "POST", body: { action: "notify" } }));
-    expect(open.status).toBe(403);
-    expect((await hangeulPost(request("/api/hangeul", { method: "POST", body: { action: "explode" } }))).status).toBe(400);
-
-    vi.stubEnv("JEANNIE_ACCESS_KEY", SECRETS.JEANNIE_ACCESS_KEY);
-    const trusted = await hangeulPost(
-      request("/api/hangeul", { method: "POST", body: { action: "notify" }, headers: { "x-jeannie-key": SECRETS.JEANNIE_ACCESS_KEY } }),
-    );
-    expect(trusted.status).toBe(200);
-    expect(((await trusted.json()) as { delivered: boolean }).delivered).toBe(false); // Telegram not configured
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

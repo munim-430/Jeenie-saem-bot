@@ -2,7 +2,8 @@
 
 Jeannie is a J.A.R.V.I.S.-style personal AI with a neon-pink holographic HUD. She speaks English and
 Korean (한국어), sees through your camera, searches the live web, talks back with a neural voice,
-reports on your Hangeul admin portal, and answers every smart-home command with instant composure.
+answers questions about the agency from the data Hangeul BOT publishes, and answers every smart-home
+command with instant composure.
 
 | Layer | Service |
 | --- | --- |
@@ -21,7 +22,7 @@ Canvas-based holographic visualizers. Ready for Vercel with zero extra configura
 | **IoT Interceptor** | Any smart-home or IoT command or query gets exactly `Yes, it is done.` (`네, 처리되었습니다.` in Korean). No tools, no LLM. |
 | **Live Search Agent** | Time-sensitive or fact-checking questions go to DeepSeek's native web search (same `DEEPSEEK_API_KEY`), then Tavily and Google Custom Search if configured, then DuckDuckGo. The results are summarized with inline `[n]` citations. |
 | **Vision & Localization Agent** | Image attachments (documents, screenshots, camera frames) get a structured bilingual analysis, with visible text transcribed and translated. |
-| **Hangeul Admin Bridge** | Fetches admin reports and status checks from the Hangeul portal on demand. Uses mock data when live access isn't configured, and sends a daily report to Telegram. |
+| **Hangeul data** | Answers questions about the agency ("how many consultancies were closed today?", "who is HNG-2026-12?", "any passport alerts today?") from the records Hangeul BOT publishes to Supabase. Code builds every figure and table; the model only adds up to two checked sentences. Every answer ends with an "as of" time. Needs the access key. |
 | **Mistake Audit Agent** | "Audit this for mistakes", "실수 점검해줘": answers in a fixed frame (Issue · Cause · Recommendation) and asks for approval. "승인" / "approve" gets a standard execution confirmation; "취소" / "cancel" puts it on hold. |
 | **General Cognitive Agent** | Handles everything else and can call web search on its own. |
 
@@ -45,7 +46,8 @@ npm run dev                  # http://localhost:3000
 ```
 
 With no keys at all, Jeannie still runs in offline mode. IoT confirmations, live search (DuckDuckGo),
-Edge neural voice, camera, and the mock Hangeul report all work. Add `DEEPSEEK_API_KEY` for full reasoning.
+Edge neural voice and camera all work. Add `DEEPSEEK_API_KEY` for full reasoning. The Hangeul answers need
+`SUPABASE_URL`, `SUPABASE_SECRET_KEY` and `JEANNIE_ACCESS_KEY` (they work without a language model).
 For image analysis, also add `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY`, or run [Ollama](https://ollama.com)
 with a vision model.
 
@@ -135,10 +137,8 @@ The same call without the `apikey` header must answer 401.
    - Copy the keys you need from [`.env.example`](.env.example) into **Settings → Environment Variables**.
    - At minimum, set `DEEPSEEK_API_KEY`: it drives both the conversation and live web search (DeepSeek's native `web_search`). `TAVILY_API_KEY` and Google Custom Search are optional extra fallbacks before the keyless DuckDuckGo.
    - Also set `JEANNIE_ACCESS_KEY` on any public deployment.
-4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and Hangeul run as Node.js functions.
-5. **Daily report (optional).** `vercel.json` schedules a daily cron (03:00 UTC) on `/api/hangeul`.
-   - Set `CRON_SECRET` so only Vercel can trigger it.
-   - Set `TELEGRAM_*` so the report reaches your admin chat.
+4. **Deploy.** Click **Deploy**. `/api/chat` and `/api/search` run on the Edge runtime. Voice, Telegram, and the Hangeul data routes run as Node.js functions.
+5. **No cron.** `vercel.json` schedules nothing. The old 03:00 UTC cron pushed the portal bridge's demo report to Telegram; Hangeul BOT sends its own brief at 18:05.
 
 ### Telegram webhook
 
@@ -153,7 +153,7 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 
 `TELEGRAM_WEBHOOK_SECRET` is required. Without it the webhook refuses every update (HTTP 503), so nobody can forge messages to your bot.
 Until `TELEGRAM_ADMIN_CHAT_ID` is set, the bot answers only `/start`, `/help` and `/whoami`. Send `/whoami`, put the chat id it returns in
-`TELEGRAM_ADMIN_CHAT_ID`, and redeploy. From then on only that chat gets answers, live search, and live Hangeul data.
+`TELEGRAM_ADMIN_CHAT_ID`, and redeploy. From then on only that chat gets answers, live search, and the Hangeul data.
 
 ## Configuration
 
@@ -171,11 +171,11 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `DEEPSEEK_SEARCH_MODEL`, `DEEPSEEK_ANTHROPIC_BASE_URL` | Optional overrides for DeepSeek's native web search (defaults `deepseek-v4-flash`, `https://api.deepseek.com/anthropic`). |
 | `TAVILY_API_KEY`, `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | Optional fallback search providers after DeepSeek. DuckDuckGo is the keyless last resort. |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Jeannie's main voice. `eleven_multilingual_v2` speaks Korean; `eleven_flash_v2_5` is faster. With only the key set, the premade voice "Rachel" is used; free plans must set the ID of a voice they created, since library voices return HTTP 402 there (Jeannie then falls back to the Edge voice). |
-| `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | Memory. The key is server-only; the publishable/anon key can't read memory. See [Memory](#memory-supabase). |
+| `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | Memory and the Hangeul data (one project). The key is server-only; the publishable/anon key can read neither. See [Memory](#memory-supabase) and [Hangeul data](#hangeul-data). |
 | `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. The webhook secret is required, and only the admin chat gets answers. |
-| `HANGEUL_BASE_URL`, `HANGEUL_USERNAME`, `HANGEUL_PASSWORD`, `HANGEUL_REPORT_PATH`, `HANGEUL_STATUS_PATH`, `MOCK_MODE` | Hangeul admin portal. See below. |
-| `CRON_SECRET` | Authenticates the Vercel Cron call to `/api/hangeul`. |
+| `MOCK_MODE` | `true`: the session greeting uses its template instead of the model. |
+| `CRON_SECRET` | Optional: a caller with `Authorization: Bearer $CRON_SECRET` is trusted (for a cron you add; none is scheduled). |
 
 > **About the voice:** set `ELEVENLABS_VOICE_ID` to a voice you own or are licensed to use, such as
 > one from the ElevenLabs Voice Library or your own recording. Cloning a real person's voice without
@@ -205,40 +205,45 @@ The interceptor runs first, before search, vision, or any model call, so it resp
 - **Doesn't trigger:** questions like "what's the speed of light?" or "I'm a fan of your style" go to the other agents instead.
 - **No real devices:** confirmations are simulated. Jeannie doesn't connect to any device. To control real hardware, call it from `src/lib/agents/iot-interceptor.ts` before returning the confirmation (for example, a Home Assistant webhook).
 
-## Hangeul admin bridge
+## Hangeul data
 
-`/api/hangeul` (and the chat, when you ask for a "Hangeul report") reads two JSON endpoints relative to `HANGEUL_BASE_URL`:
+Jeannie never talks to the Hangeul portal (it has no API). Hangeul BOT, on the office PC, reads the portal and
+publishes everything it reads to Supabase: students, payment verifications, consultation requests, consultant
+performance, passport checks, document checks with their OCR text, calendar items and its reports (see
+[`.scratch/hangeul-cloud-context/spec.md`](.scratch/hangeul-cloud-context/spec.md)). Jeannie reads it there
+(`src/lib/hangeul/`).
 
-- `HANGEUL_REPORT_PATH` (default `/api/reports/daily`)
-- `HANGEUL_STATUS_PATH` (default `/api/status`)
-
-**Authentication.** Requests use HTTP Basic auth with `HANGEUL_USERNAME` and `HANGEUL_PASSWORD`.
-
-**Response format.** Any JSON works:
-
-- A `metrics: [{label, value}]` array and a `highlights: string[]` array are used as-is.
-- Otherwise, top-level fields are turned into metrics.
-
-**Who gets live data.** Live portal data is only returned to trusted callers:
-
-- a request carrying `JEANNIE_ACCESS_KEY`
-- the Vercel Cron call carrying `CRON_SECRET`
-- the Telegram admin chat
-
-Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_MODE=true` forces mock data.
+- **Code builds every figure.** A question becomes a query plan (`router.ts`: whole-word rules), the plan reads rows
+  (`store.ts`, PostgREST with 3 s timeouts that fail with a plain reason) and `answer.ts` computes the facts and
+  tables. With a language model, it adds at most two sentences, and any sentence holding a number that is not in the
+  facts is dropped. Without one, the facts stand alone.
+- **Never 0 for an unread kind.** A kind the bot has never read is "not available yet". A portal field left as N/A
+  or PENDING is "not given on the portal". Every answer ends with `As of HH:MM (job)`, dated by the bot's runs
+  (`hg_runs`), because a record's `read_at` only moves when its content changes.
+- **Who gets it.** The data holds full student records, so only a caller with `JEANNIE_ACCESS_KEY` (set and
+  presented) or the Telegram admin chat gets answers. An open deployment gets none.
+- **Asking.** In the chat ("how many consultancies were closed today?", "who is HNG-2026-12?", "payments verified on
+  12 Sep", "any passport alerts today?", "what changed since this morning?"), with `/report` in Telegram, or with the
+  HUD's DAILY REPORT button (the latest daily brief).
 
 ## API
 
 | Route | Runtime | Description |
 | --- | --- | --- |
-| `POST /api/chat` | Edge | `{ messages, image?, lang? }` → streamed text. Metadata comes back in the `x-jeannie-agent`, `x-jeannie-lang`, `x-jeannie-provider`, `x-jeannie-sources`, and `x-jeannie-honorific` (URI-encoded) headers. |
+| `POST /api/chat` | Edge | `{ messages, image?, lang?, hangeul? }` → streamed text. `hangeul` (optional) carries the device's `{ embedding?, hits? }` for a Hangeul question. Metadata comes back in the `x-jeannie-agent`, `x-jeannie-lang`, `x-jeannie-provider`, `x-jeannie-sources`, and `x-jeannie-honorific` (URI-encoded) headers. |
 | `GET /api/session` | Edge | The opening greeting: `{ greeting, honorific, localTime, timeZone }`. |
 | `GET/POST/PATCH/DELETE /api/memory` | Node.js | List, upload (`{ name, content, pinned? }` or multipart), pin (`?id=` + `{ pinned }`) and delete (`?id=`) memory documents. Needs `JEANNIE_ACCESS_KEY`. |
 | `GET/POST /api/search` | Edge | Live search: `?q=` or `{ query, maxResults? }`. |
 | `POST /api/tts` | Node.js | `{ text, lang? }` → `audio/mpeg`. The engine used is named in `x-jeannie-tts-engine`. Returns 503 when only the browser voice is available. |
-| `GET/POST /api/hangeul` | Node.js | `action=status\|report\|notify`, plus the daily cron. |
+| `GET /api/hangeul` | Node.js | The Hangeul data's state: `{ configured, records, lastRuns, latestBrief, latestReport }` (no student data). |
+| `GET /api/hangeul/snapshot?cursor=` | Node.js | One ~3 MB page of the full dump for a device's first sync: `{ max_seq, records, chunks, next }`, vectors as base64 float32. |
+| `GET /api/hangeul/changes?since=&limit=` | Node.js | The change log after `since`: `{ changes, next_seq, more }`. |
+| `POST /api/hangeul/ask` | Node.js | `{ question, lang?, embedding?, hits?, prose? }` → a code-built answer with its plan, facts, tables and as-of line. |
 | `POST /api/telegram/webhook` | Node.js | Telegram bot bridge. |
-| `GET /api/status` | Edge | Which capabilities are configured. Never returns secrets. |
+| `GET /api/status` | Edge | Which capabilities are configured. Never returns secrets. `hangeul.records` and `hangeul.lastRuns` only with the access key. |
+
+Every `/api/hangeul/*` route needs `JEANNIE_ACCESS_KEY` set (403 otherwise) and presented (401), and Supabase
+configured (503).
 
 ## Project layout
 
@@ -246,18 +251,20 @@ Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_M
 src/
 ├── app/
 │   ├── api/{chat,search,tts,hangeul,status,session,memory}/route.ts
+│   ├── api/hangeul/{snapshot,changes,ask}/route.ts
 │   ├── api/telegram/webhook/route.ts
 │   ├── layout.tsx · page.tsx · globals.css      # the pink hologram HUD
 ├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · MemoryPanel · CameraScanner
 ├── hooks/        chat streaming, voice output, speech recognition
 └── lib/
-    ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent · hangeul-bridge
+    ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent
     │             tts-engine · edge-tts · llm · persona · etiquette · audit-flow
+    ├── hangeul/  router · answer (isomorphic, code-built answers) · store (PostgREST) · respond · filter · days · vectors
     ├── memory/   chunk (markdown/JSONL chunking, secret guard, search terms) · store · supabase
     ├── client/   typed fetch wrappers for the HUD
     └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
 tests/            Vitest suites for agents and routes
-supabase/migrations/  memory tables, search function, audit state
+supabase/migrations/  memory tables, search function, audit state, the Hangeul context
 supabase/functions/hg-embed/  question embeddings for Hangeul search (Edge Function)
 ```
 

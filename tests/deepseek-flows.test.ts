@@ -195,7 +195,7 @@ describe("DeepSeek as the brain", () => {
 });
 
 async function statusGET(): Promise<string> {
-  return (await statusGet()).text();
+  return (await statusGet(new Request("http://localhost/api/status"))).text();
 }
 
 // ─── Orchestrator: honorific, memory, audit flow ────────────────────────────

@@ -134,7 +134,7 @@ export async function buildSessionGreeting(options: GreetingOptions): Promise<Se
     source: "template",
   };
 
-  const resolved = env.hangeul.mockMode && !options.model ? null : resolveModel(options);
+  const resolved = env.mockMode && !options.model ? null : resolveModel(options);
   if (!resolved) return template;
 
   const deadline = withTimeout(options.timeoutMs ?? GREETING_TIMEOUT_MS, options.signal);

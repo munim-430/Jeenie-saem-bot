@@ -32,6 +32,14 @@ export interface ChatRequestBody {
   /** Image for the latest user message (data URL). Same as setting `image` on that message. */
   image?: string | null;
   lang?: LangMode;
+  /** What the PWA computed on the device for a Hangeul question (used only when it routes to Hangeul). */
+  hangeul?: HangeulDeviceHints;
+}
+
+/** The device's question vector (384 numbers, or their base64 float32 form) and/or its own search hits. */
+export interface HangeulDeviceHints {
+  embedding?: number[] | string;
+  hits?: { kind: string; key: string }[];
 }
 
 /**
@@ -97,28 +105,30 @@ export type TtsEngine = "elevenlabs" | "edge" | "browser";
 /** Header on /api/tts audio responses naming the engine that produced it. */
 export const TTS_ENGINE_HEADER = "x-jeannie-tts-engine";
 
-export interface HangeulMetric {
-  label: string;
-  value: string | number;
+/** The newest finished run of one Hangeul BOT job (hg_runs). */
+export interface HangeulRunSummary {
+  job: string;
+  /** ISO time. */
+  finishedAt: string;
+  status: "ok" | "partial" | "failed" | null;
 }
 
-export interface HangeulReport {
-  /** "live" = fetched from the portal; "mock" = demo data; "mock-fallback" = live failed. */
-  source: "live" | "mock" | "mock-fallback";
-  generatedAt: string; // ISO timestamp
-  title: string;
-  metrics: HangeulMetric[];
-  highlights: string[];
-  /** Why live data was not used, when source !== "live". */
-  note?: string;
+/** A report record's key and times (no content). */
+export interface HangeulReportSummary {
+  key: string;
+  /** The report's name (its scope): "brief", "missing_report", "document_check"... */
+  report: string;
+  day: string | null;
+  read_at: string;
 }
 
-export interface HangeulStatus {
-  source: "live" | "mock" | "mock-fallback";
-  online: boolean;
-  checkedAt: string;
-  latencyMs?: number;
-  note?: string;
+/** GET /api/hangeul response: the state of the data Hangeul BOT publishes (no student data). */
+export interface HangeulDataStatus {
+  configured: true;
+  records: number;
+  lastRuns: HangeulRunSummary[];
+  latestBrief: HangeulReportSummary | null;
+  latestReport: HangeulReportSummary | null;
 }
 
 /** GET /api/status response: which capabilities are configured (never secrets). */
@@ -137,7 +147,8 @@ export interface SystemStatus {
   search: { providers: SearchProvider[] };
   voice: { engines: TtsEngine[] };
   telegram: { configured: boolean };
-  hangeul: { mode: "live" | "mock" };
+  /** The Hangeul data in Supabase. `records` and `lastRuns` only for a caller with the access key (else null). */
+  hangeul: { configured: boolean; records: number | null; lastRuns: HangeulRunSummary[] | null };
   time: string;
 }
 

@@ -10,7 +10,7 @@ import {
   type AgentId,
   type ApiError,
   type ChatRequestBody,
-  type HangeulStatus,
+  type HangeulDataStatus,
   type LlmProvider,
   type MemoryDocument,
   type ResolvedLang,
@@ -329,15 +329,16 @@ export async function requestSpeech(payload: TtsRequestBody, signal?: AbortSigna
   return { audio, engine };
 }
 
-// ── Hangeul bridge ─────────────────────────────────────────────────────────
+// ── Hangeul data ───────────────────────────────────────────────────────────
 
-export async function fetchHangeulStatus(signal?: AbortSignal): Promise<HangeulStatus> {
-  const res = await request("/api/hangeul?action=status", { signal, timeoutMs: HANGEUL_TIMEOUT_MS });
+/** GET /api/hangeul: how much data Hangeul BOT has published, its latest runs and latest brief. */
+export async function fetchHangeulData(signal?: AbortSignal): Promise<HangeulDataStatus> {
+  const res = await request("/api/hangeul", { signal, timeoutMs: HANGEUL_TIMEOUT_MS });
   try {
-    const data = (await res.json()) as { status?: HangeulStatus };
-    if (!data.status) throw new Error("missing status");
-    return data.status;
+    const data = (await res.json()) as Partial<HangeulDataStatus>;
+    if (data.configured !== true || typeof data.records !== "number" || !Array.isArray(data.lastRuns)) throw new Error("missing fields");
+    return data as HangeulDataStatus;
   } catch {
-    throw new ApiRequestError(res.status, "invalid_response", "Hangeul bridge returned malformed data.");
+    throw new ApiRequestError(res.status, "invalid_response", "Hangeul data status returned malformed data.");
   }
 }

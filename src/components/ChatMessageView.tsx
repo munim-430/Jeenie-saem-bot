@@ -26,7 +26,7 @@ export const AGENT_META: Record<AgentId, { label: string; ko: string; icon: Luci
   vision: { label: "VISION", ko: "비전", icon: Eye, tone: "border-petal/70 bg-petal/15 text-petal-soft" },
   hangeul: {
     label: "HANGEUL",
-    ko: "한글 브리지",
+    ko: "한글 데이터",
     icon: FileText,
     tone: "border-neon-deep/70 bg-neon-deep/15 text-petal-soft",
   },

@@ -55,9 +55,8 @@ Prefer the most recent and most authoritative results; mention dates when they m
   vision: `Role: Multimodal Vision & Localization Agent. Analyse the attached image (document, screenshot or camera frame).
 Structure the answer as: a one-line summary, then "Key details" (bullets), then "Text found" (transcribe any visible text; translate Korean ↔ English when the other language is requested), then "Next steps" if useful.
 Do not guess at text you cannot read.`,
-  hangeul: `Role: Hangeul Admin & Reporting Bridge. A report from the Hangeul admin portal is provided below as JSON.
-Present it as a short executive briefing: headline, key metrics, notable highlights, and anything needing attention.
-If the report source is "mock" or "mock-fallback", state clearly that this is demo data and not live portal data.`,
+  hangeul: `Role: Hangeul data desk. Code has already answered the user's latest message from the records Hangeul BOT read from the agency's portal: the figures, tables and "as of" line are below as JSON, and they are shown to the user verbatim right after your words.
+Write at most two short sentences that lead into them: the headline figure and anything that needs attention. Every number you write must appear in that JSON; never add, subtract, estimate or round numbers of your own, and never restate the tables. A figure that is "not available yet" is not zero: say it is not available yet. "Not given on the portal" means the portal left that field empty. No lists, headings or sources.`,
 };
 
 export function buildSystemPrompt(options: {

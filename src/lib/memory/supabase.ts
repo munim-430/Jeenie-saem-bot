@@ -38,6 +38,14 @@ export function memoryConfigured(): boolean {
  * go in `Authorization`, which is what makes PostgREST run as service_role.
  */
 export async function supabaseRest<T = unknown>(path: string, request: SupabaseRequest = {}): Promise<T> {
+  return (await supabaseRestResponse<T>(path, request)).data;
+}
+
+/** Same as supabaseRest, with the response headers (e.g. `Content-Range` for `Prefer: count=exact`). */
+export async function supabaseRestResponse<T = unknown>(
+  path: string,
+  request: SupabaseRequest = {},
+): Promise<{ data: T; headers: Headers }> {
   const { memory } = getEnv();
   if (!memory.supabaseUrl || !memory.serviceKey) throw new MemoryError("memory not configured");
 
@@ -76,7 +84,7 @@ export async function supabaseRest<T = unknown>(path: string, request: SupabaseR
     }
     throw new MemoryError(`HTTP ${res.status}${code}`, res.status);
   }
-  if (res.status === 204) return null as T;
+  if (res.status === 204) return { data: null as T, headers: res.headers };
   const text = await res.text();
-  return (text ? JSON.parse(text) : null) as T;
+  return { data: (text ? JSON.parse(text) : null) as T, headers: res.headers };
 }

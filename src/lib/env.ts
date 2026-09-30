@@ -120,6 +120,7 @@ export function getEnv() {
   // tables refuse the publishable/anon key by design.
   const supabaseUrl = read("SUPABASE_URL") ?? read("NEXT_PUBLIC_SUPABASE_URL");
   const supabaseServiceKey = read("SUPABASE_SERVICE_ROLE_KEY") ?? read("SUPABASE_SECRET_KEY");
+  const supabaseBase = supabaseUrl?.replace(/\/+$/, "");
 
   return {
     appName: read("NEXT_PUBLIC_APP_NAME") ?? "Jeannie AI",
@@ -127,6 +128,8 @@ export function getEnv() {
     accessKey: read("JEANNIE_ACCESS_KEY"),
     cronSecret: read("CRON_SECRET"),
     timeZone: timeZone(),
+    /** MOCK_MODE: the session greeting uses its template instead of the model. */
+    mockMode: readBool("MOCK_MODE", false),
 
     llm: {
       provider: llmProvider,
@@ -142,9 +145,17 @@ export function getEnv() {
     },
 
     memory: {
-      supabaseUrl: supabaseUrl?.replace(/\/+$/, ""),
+      supabaseUrl: supabaseBase,
       serviceKey: supabaseServiceKey,
       enabled: Boolean(supabaseUrl && supabaseServiceKey),
+    },
+
+    // The Hangeul context (what Hangeul BOT publishes) lives in the same Supabase project as
+    // memory and uses the same server-only key; Jeannie never talks to the portal itself.
+    hangeul: {
+      enabled: Boolean(supabaseUrl && supabaseServiceKey),
+      /** The hg-embed Edge Function: question embeddings before a device has its own model. */
+      embedUrl: supabaseBase ? `${supabaseBase}/functions/v1/hg-embed` : undefined,
     },
 
     search: {
@@ -171,15 +182,6 @@ export function getEnv() {
       adminChatId: read("TELEGRAM_ADMIN_CHAT_ID"),
       webhookSecret: read("TELEGRAM_WEBHOOK_SECRET"),
     },
-
-    hangeul: {
-      baseUrl: read("HANGEUL_BASE_URL"),
-      username: read("HANGEUL_USERNAME"),
-      password: read("HANGEUL_PASSWORD"),
-      reportPath: read("HANGEUL_REPORT_PATH") ?? "/api/reports/daily",
-      statusPath: read("HANGEUL_STATUS_PATH") ?? "/api/status",
-      mockMode: readBool("MOCK_MODE", false),
-    },
   };
 }
 
@@ -200,10 +202,4 @@ export function configuredTtsEngines(env: JeannieEnv = getEnv()): TtsEngine[] {
   if (env.tts.edgeEnabled) engines.push("edge");
   engines.push("browser"); // client-side speechSynthesis, always available
   return engines;
-}
-
-/** Live Hangeul access needs credentials and MOCK_MODE off. */
-export function hangeulLiveConfigured(env: JeannieEnv = getEnv()): boolean {
-  const h = env.hangeul;
-  return !h.mockMode && Boolean(h.baseUrl && h.username && h.password);
 }

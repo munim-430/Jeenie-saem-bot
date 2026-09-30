@@ -6,12 +6,13 @@
 
 import { APPROVAL_MARKER, isApprovalReply } from "./agents/audit-flow";
 import { sessionGreeting } from "./agents/etiquette";
-import { formatHangeulReport, getHangeulReport, hangeulHudMode } from "./agents/hangeul-bridge";
 import { checkIoTQuery } from "./agents/iot-interceptor";
 import { runOrchestratorToText } from "./agents/orchestrator";
 import { formatSearchBriefing, webSearch, withTimeout } from "./agents/search-agent";
 import { stripEmotes } from "./emote";
-import { configuredSearchProviders, configuredTtsEngines, getEnv, hangeulLiveConfigured, type JeannieEnv } from "./env";
+import { configuredSearchProviders, configuredTtsEngines, getEnv } from "./env";
+import { answerHangeul } from "./hangeul/respond";
+import { createHangeulStore } from "./hangeul/store";
 import { getPendingAudit, logAuditDecision, savePendingAudit } from "./memory/store";
 import type { ChatMessage, LangMode, SourceLink } from "./types";
 import { truncate } from "./utils";
@@ -215,7 +216,7 @@ const TEXT = {
   help: bilingual(
     [
       "Commands:",
-      "/report - Hangeul admin report",
+      "/report - Hangeul daily brief (Hangeul BOT's data)",
       "/search <query> - live web search",
       "/status - Jeannie's systems",
       "/whoami - this chat's id",
@@ -223,7 +224,7 @@ const TEXT = {
     ].join("\n"),
     [
       "명령어:",
-      "/report - 한글 관리자 보고서",
+      "/report - 한글 일일 브리핑 (Hangeul BOT 자료)",
       "/search <검색어> - 실시간 웹 검색",
       "/status - 시스템 상태",
       "/whoami - 이 채팅의 ID",
@@ -249,11 +250,22 @@ function whoamiText(chatId: number, isAdmin: boolean, adminConfigured: boolean):
   return bilingual(en, ko);
 }
 
-function hangeulStatusLine(env: JeannieEnv, isAdmin: boolean): string {
-  if (hangeulHudMode(env) === "live") return isAdmin ? "live" : "live in the HUD; demo data in this chat";
-  // The admin chat is trusted on its own, so /report here is live even while the HUD gets demo data.
-  if (hangeulLiveConfigured(env) && isAdmin) return "demo data in the HUD until JEANNIE_ACCESS_KEY is set (/report here is live)";
-  return "demo data";
+/** The daily brief from the Hangeul data, code-built only (no model): the admin chat's /report. */
+async function hangeulReportText(lang: ReplyLang, deadline: AbortSignal): Promise<string> {
+  const env = getEnv();
+  if (!env.hangeul.enabled) {
+    return pick(lang, "The Hangeul data is not configured (SUPABASE_URL, SUPABASE_SECRET_KEY).", "한글 자료가 설정되어 있지 않아요 (SUPABASE_URL, SUPABASE_SECRET_KEY).");
+  }
+  const answer = await answerHangeul({
+    question: "Hangeul daily report",
+    lang,
+    readers: createHangeulStore({ signal: deadline }),
+    now: new Date(),
+    timeZone: env.timeZone,
+    model: null,
+    signal: deadline,
+  });
+  return stripEmotes(answer.text);
 }
 
 function statusText(isAdmin: boolean): string {
@@ -266,7 +278,7 @@ function statusText(isAdmin: boolean): string {
     `• Live search: ${configuredSearchProviders(env).join(" → ")}`,
     `• Voice: ${configuredTtsEngines(env).join(", ")}`,
     `• Memory: ${env.memory.enabled ? "Supabase connected" : "not configured"}`,
-    `• Hangeul portal: ${hangeulStatusLine(env, isAdmin)}`,
+    `• Hangeul data: ${env.hangeul.enabled ? "Supabase connected" : "not configured"}`,
     `• Admin chat: ${env.telegram.adminChatId ? (isAdmin ? "this chat" : "configured") : "not set (use /whoami)"}`,
     `• Access key: ${env.accessKey ? "required" : "not required"}`,
   ];
@@ -388,9 +400,10 @@ async function handleMessage(message: TelegramMessage, deadline: AbortSignal): P
         await sendMessage(chatId, statusText(isAdmin));
         return;
       case "report": {
+        // Only the admin chat reaches here (every other chat was refused above).
         void sendChatAction(chatId);
-        const report = await getHangeulReport({ trusted: isAdmin, signal: deadline });
-        await sendMessage(chatId, deadline.aborted ? TEXT.failed : formatHangeulReport(report, lang));
+        const text = await hangeulReportText(lang, deadline);
+        await sendMessage(chatId, deadline.aborted ? TEXT.failed : text);
         return;
       }
       case "search": {

@@ -122,8 +122,10 @@ beforeEach(() => {
   for (const name of ["OPENAI_API_KEY", "OLLAMA_BASE_URL", "LLM_PROVIDER", "TAVILY_API_KEY", "GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"]) {
     vi.stubEnv(name, "");
   }
-  for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE", "JEANNIE_ACCESS_KEY"]) vi.stubEnv(name, "");
-  for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) vi.stubEnv(name, "");
+  for (const name of ["MOCK_MODE", "JEANNIE_ACCESS_KEY"]) vi.stubEnv(name, "");
+  for (const name of ["DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY", "NEXT_PUBLIC_SUPABASE_URL"]) {
+    vi.stubEnv(name, "");
+  }
   // Unset, not blank: @ai-sdk/openai reads a blank OPENAI_BASE_URL itself and rejects it.
   for (const name of ["OPENAI_BASE_URL", "DEFAULT_MODEL", "VERCEL"]) vi.stubEnv(name, undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -213,9 +215,8 @@ describe("handleTelegramUpdate", () => {
   it("stays locked until TELEGRAM_ADMIN_CHAT_ID is set: only /start, /help and /whoami are answered", async () => {
     vi.stubEnv("TELEGRAM_ADMIN_CHAT_ID", "your_chat_id"); // the .env.example placeholder counts as unset
     vi.stubEnv("OPENAI_API_KEY", "sk-test");
-    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
-    vi.stubEnv("HANGEUL_USERNAME", "u");
-    vi.stubEnv("HANGEUL_PASSWORD", "p");
+    vi.stubEnv("SUPABASE_URL", "https://proj.supabase.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const tg = fakeTelegram();
     await handleTelegramUpdate(textUpdate(STRANGER, "/whoami@JeannieBot"));
     await handleTelegramUpdate(textUpdate(STRANGER, "/start"));
@@ -261,15 +262,17 @@ describe("handleTelegramUpdate", () => {
     expect(unknown).toContain("/help");
   });
 
-  it("/report is live only for the admin chat", async () => {
-    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
-    vi.stubEnv("HANGEUL_USERNAME", "u");
-    vi.stubEnv("HANGEUL_PASSWORD", "p");
+  it("/report reads the Hangeul data for the admin chat only, and never shows demo data", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://proj.supabase.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const tg = fakeTelegram();
     await handleTelegramUpdate(textUpdate(ADMIN, "/report"));
-    expect(tg.other).toEqual(["https://portal.example/api/reports/daily"]);
-    // The portal mock answers 500, so the admin sees the labelled fallback.
-    expect(String(tg.sent()[0].text)).toContain("Live portal request failed (portal answered HTTP 500)");
+    expect(tg.other.length).toBeGreaterThan(0);
+    expect(tg.other.every((url) => url.startsWith("https://proj.supabase.example/rest/v1/"))).toBe(true);
+    // The fake Supabase answers 500, so the admin gets the plain reason, not a figure.
+    const text = String(tg.sent()[0].text);
+    expect(text).toContain("I couldn't read the Hangeul data just now (Hangeul data unreachable (HTTP 500))");
+    expect(text).not.toMatch(/demo|mock/i);
 
     const stranger = fakeTelegram();
     await handleTelegramUpdate(textUpdate(STRANGER, "/report"));
@@ -277,20 +280,24 @@ describe("handleTelegramUpdate", () => {
     expect(String(stranger.sent()[0].text)).toContain("This Jeannie instance is private.");
   });
 
-  it("/status calls Hangeul live only when the HUD gets live data too", async () => {
-    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
-    vi.stubEnv("HANGEUL_USERNAME", "u");
-    vi.stubEnv("HANGEUL_PASSWORD", "p");
+  it("/report says when the Hangeul data is not configured", async () => {
+    const tg = fakeTelegram();
+    await handleTelegramUpdate(textUpdate(ADMIN, "/report"));
+    expect(String(tg.sent()[0].text)).toContain("The Hangeul data is not configured");
+    expect(tg.other).toEqual([]);
+  });
+
+  it("/status says whether the Hangeul data is connected", async () => {
     const tg = fakeTelegram();
     await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
-    vi.stubEnv("JEANNIE_ACCESS_KEY", "hud-key");
+    vi.stubEnv("SUPABASE_URL", "https://proj.supabase.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
-    vi.stubEnv("HANGEUL_PASSWORD", "");
-    await handleTelegramUpdate(textUpdate(ADMIN, "/status"));
-    const [noKey, withKey, noPortal] = tg.sent().map((p) => String(p.text));
-    expect(noKey).toContain("• Hangeul portal: demo data in the HUD until JEANNIE_ACCESS_KEY is set (/report here is live)");
-    expect(withKey).toContain("• Hangeul portal: live\n");
-    expect(noPortal).toContain("• Hangeul portal: demo data\n");
+    const [off, on] = tg.sent().map((p) => String(p.text));
+    expect(off).toContain("• Hangeul data: not configured\n");
+    expect(on).toContain("• Hangeul data: Supabase connected\n");
+    expect(on).not.toContain("sb_secret_test");
+    expect(tg.other).toEqual([]);
   });
 
   it("/search returns numbered results and asks for a query when empty", async () => {
@@ -370,7 +377,7 @@ describe("handleTelegramUpdate", () => {
     const started = performance.now();
     await handleTelegramUpdate(textUpdate(ADMIN, `hangeul portal up${"\n".repeat(20_000)}.`));
     expect(performance.now() - started).toBeLessThan(500);
-    expect(String(tg.sent()[0].text)).toContain("Hangeul portal: online (demo)");
+    expect(String(tg.sent()[0].text)).toContain("The Hangeul data isn't connected");
   });
 
   it("rejects photos over 4 MB without downloading", async () => {
@@ -446,9 +453,8 @@ describe("webhook route", () => {
     ["on Vercel", "1"],
   ])("refuses every update without TELEGRAM_WEBHOOK_SECRET (%s)", async (_label, vercel) => {
     vi.stubEnv("VERCEL", vercel);
-    vi.stubEnv("HANGEUL_BASE_URL", "https://portal.example");
-    vi.stubEnv("HANGEUL_USERNAME", "u");
-    vi.stubEnv("HANGEUL_PASSWORD", "p");
+    vi.stubEnv("SUPABASE_URL", "https://proj.supabase.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_test");
     const tg = fakeTelegram();
     // A forged update claiming to come from the admin chat.
     const attempts: Record<string, string>[] = [{}, { "x-telegram-bot-api-secret-token": "anything" }];
