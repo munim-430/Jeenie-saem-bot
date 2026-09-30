@@ -4,7 +4,9 @@
   "private": true,
   "description": "Jeannie: bilingual (English/Korean) multimodal personal AI with a neon-pink tactical HUD. DeepSeek brain, ElevenLabs voice, Supabase memory.",
   "scripts": {
+    "predev": "node scripts/copy-ort.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-ort.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

@@ -10,7 +10,8 @@ const compat = new FlatCompat({ baseDirectory: __dirname });
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "coverage/**", "next-env.d.ts", ".claude/**"],
+    // public/ort/: onnxruntime-web's runtime, copied from node_modules (scripts/copy-ort.mjs).
+    ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "coverage/**", "next-env.d.ts", ".claude/**", "public/ort/**"],
   },
 ];
 

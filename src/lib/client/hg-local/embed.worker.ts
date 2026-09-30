@@ -4,14 +4,19 @@
 // worker leaves alone), and each question becomes a mean-pooled, L2-normalised
 // 384-d vector, the same recipe as the bot's stored vectors. Only question text
 // and stored chunk texts (the model check) ever come here, and nothing leaves
-// the device: the model runs locally (WASM).
+// the device: the model runs locally (WASM). The WASM runtime's code comes from
+// Jeannie's own origin (/ort/, copied from the lockfile's onnxruntime-web), never
+// from a CDN (ort-runtime.ts).
 
 import { env, pipeline } from "@huggingface/transformers";
 import { EMBED_MODEL_DTYPE, EMBED_MODEL_ID, type EmbedRequest, type EmbedResponse } from "./embed-protocol";
+import { selfHostOnnxRuntime } from "./ort-runtime";
 
 // The model comes from the Hugging Face Hub only (no /models/ path on Jeannie's origin), cached by the browser.
 env.allowLocalModels = false;
 env.useBrowserCache = true;
+// transformers.js defaults the runtime to cdn.jsdelivr.net; without our own copy, no model loads.
+const runtimeSelfHosted = selfHostOnnxRuntime(env);
 
 // The DOM lib has no worker scope types: the two members used here.
 const scope = self as unknown as {
@@ -24,6 +29,7 @@ type Extractor = (texts: string[], options: { pooling: "mean"; normalize: boolea
 let loading: Promise<Extractor> | null = null;
 
 function load(): Promise<Extractor> {
+  if (!runtimeSelfHosted) return Promise.reject(new Error("The WASM runtime could not be pointed at this origin."));
   if (!loading) {
     loading = pipeline("feature-extraction", EMBED_MODEL_ID, {
       dtype: EMBED_MODEL_DTYPE,

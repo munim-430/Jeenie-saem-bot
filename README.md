@@ -240,13 +240,16 @@ while online. It is never used offline: offline, Jeannie shows a banner and disa
 - **Answers.** A structured question (consultancies done, verifications on a day, a student card...) renders on the
   device with the same `answer.ts` as the server, dated by the synced runs, when the copy caught up in the last 6
   minutes and found something. Everything else goes to the server as usual.
-- **Search.** transformers.js runs `Supabase/gte-small` (quantized) in a Web Worker; the question's vector is compared
+- **Search.** transformers.js runs `Supabase/gte-small` (quantized) in a Web Worker, with onnxruntime-web's WASM
+  runtime served from Jeannie's own `/ort/` (copied from `node_modules` by `scripts/copy-ort.mjs` before `dev` and
+  `build`), never from a CDN; only the model comes from huggingface.co. The question's vector is compared
   with every local vector (about 10 ms for 15,600 vectors on a PC), and the vector and top records go to the server
   with the question, which re-reads those records from current rows. On the first sync, three stored chunk texts
   are embedded on the device: a cosine below 0.98 means a model mismatch, and search stays on the server. Korean
   and Bangla questions always search on the server (its model rewrites them into English first).
 - **Removing it.** "Delete local copy" in the Hangeul Sync panel is the only way to remove the data from a device;
-  nothing syncs again until "Sync to this device". "Re-sync everything" deletes and downloads it again.
+  nothing syncs again, in any tab or window of Jeannie on that browser, until "Sync to this device". "Re-sync
+  everything" deletes and downloads it again.
 
 ## API
 

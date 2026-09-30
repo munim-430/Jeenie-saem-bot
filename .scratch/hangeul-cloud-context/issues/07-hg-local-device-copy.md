@@ -107,8 +107,8 @@ Blocked by: none (ticket 4's routes and ticket 5's isomorphic answer code are do
    `onnxruntime-node-install=skip` (checked: npm hands it to the script as `npm_config_onnxruntime_node_install`).
    Jeannie never runs the Node backend.
 2. The build emits onnxruntime-web's 27 MB `.wasm` under `/_next/static/media/`, but transformers.js loads the WASM
-   and its glue from `cdn.jsdelivr.net` (its default) and the model from `huggingface.co`, so the emitted file is
-   never fetched. Aliasing `onnxruntime-web/webgpu` to its extern-WASM build would drop it; not done without a
+   and its glue from its own paths (since the review fixes: Jeannie's `/ort/`, see the comments; before: its
+   `cdn.jsdelivr.net` default) and the model from `huggingface.co`, so the emitted file is never fetched. Aliasing `onnxruntime-web/webgpu` to its extern-WASM build would drop it; not done without a
    phone test.
 3. The model check has not run on a real device yet (no model download here): it is part of ticket 8. A mismatch
    only moves search to the server.
@@ -163,3 +163,14 @@ The phone's sync code, run in Node against the live project through the same rou
   Delete button rest on the store's real counts ("SYNC OFF · N STILL HERE" otherwise). The panel also names a block
   as the Hangeul Data panel does: CHECKING…, NOT LINKED or LOCKED. Tests: `tests/hg-local-tabs.test.ts` (two handles
   on one in-memory IndexedDB, a shared storage, Node's BroadcastChannel).
+- 1 Oct 2026 (review fixes): transformers.js loaded onnxruntime-web's JavaScript factory and `.wasm` from
+  `cdn.jsdelivr.net` (its default when `wasmPaths` is unset) and ran them, unchecked, in the worker that gets every
+  Hangeul question and the model check's stored chunk texts. `scripts/copy-ort.mjs` (npm `predev` / `prebuild`) now
+  copies the four runtime files transformers.js may pick (asyncify, and the plain build it uses on Safari before 26
+  without WebGPU; 41 MB) from the lockfile's `node_modules/onnxruntime-web/dist` to `public/ort/` (git-ignored), and
+  the worker moves transformers.js's own choice to `/ort/` before its first pipeline (`ort-runtime.ts`); if it cannot,
+  no model loads and search stays on the server. transformers.js still caches the files in its own cache, as it did
+  from the CDN. `next start` serves them as `application/javascript` and `application/wasm` with `nosniff`. The
+  model itself still comes from huggingface.co. Not done: a Content-Security-Policy (the HUD's Next inline scripts
+  need nonces or `unsafe-inline`; worth its own change with a phone test). To check on the phone (ticket 8): the
+  first model load fetches `/ort/…` and nothing from `cdn.jsdelivr.net`. Tests: `tests/ort-runtime.test.ts`.
