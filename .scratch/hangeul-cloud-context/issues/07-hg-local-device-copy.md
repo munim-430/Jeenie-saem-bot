@@ -151,3 +151,15 @@ The phone's sync code, run in Node against the live project through the same rou
 
 - 1 Oct 2026: built on saem/hangeul-context-reader with ticket 6. `npx vitest run` 1169 passed and 8 skipped; `tsc`,
   `npm run lint` and `npm run build` are clean.
+- 1 Oct 2026 (review fixes): "Delete local copy" did not survive a second tab of the same origin (the installed PWA
+  and a Chrome tab share the one database): the other tab's in-memory choice stayed "auto", and its next sync read
+  the cleared meta as a fresh start and downloaded everything again, while the deleting tab said "NOT ON THIS
+  DEVICE" with Delete disabled. Now (`src/lib/client/hg-local/device.ts`): the choice is re-read from storage before
+  a sync starts and before each of its requests and writes (`syncOnce`'s `allowed`), so a stale tab stops instead of
+  downloading; a BroadcastChannel tells the other tabs at once, and they stop and clear once more (a page they were
+  writing may have landed after the first clear); the deleting tab clears first and turns the copy off only after
+  the clear worked (a failed clear keeps it on and the panel says it could not be deleted); the tabs sync one at a
+  time (Web Locks), so a second tab never runs a second first sync; and the panel's "NOT ON THIS DEVICE" and its
+  Delete button rest on the store's real counts ("SYNC OFF · N STILL HERE" otherwise). The panel also names a block
+  as the Hangeul Data panel does: CHECKING…, NOT LINKED or LOCKED. Tests: `tests/hg-local-tabs.test.ts` (two handles
+  on one in-memory IndexedDB, a shared storage, Node's BroadcastChannel).

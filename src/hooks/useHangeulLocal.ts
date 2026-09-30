@@ -5,7 +5,9 @@
 // open, on focus and every 5 minutes while the HUD is open; runs the embed-model
 // check once; and prepares each Hangeul question (answer on the device, or send
 // the device's search hits to the server). The logic lives in pure modules
-// under src/lib/client/hg-local/; this hook only schedules it.
+// under src/lib/client/hg-local/; this hook only schedules it. Every tab of the
+// origin shares the one database: the tabs sync one at a time (Web Locks), and
+// "Delete local copy" holds in all of them (device.ts).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, fetchHangeulChanges, fetchHangeulRuns, fetchHangeulSnapshot, isAbortError } from "@/lib/client/api";
@@ -20,6 +22,17 @@ import {
   type HgLocalStore,
   type ModelCheckResult,
 } from "@/lib/client/hg-local/db";
+import {
+  DEVICE_PREF_KEY,
+  deleteDeviceCopy,
+  followRemoteDelete,
+  isDevicePreference,
+  openDeviceChannel,
+  readDevicePreference,
+  syncAllowed,
+  type DeviceChannel,
+  type DevicePreference,
+} from "@/lib/client/hg-local/device";
 import { createWorkerEmbedder, EMBED_TIMEOUT_MS, workerSupported, type Embedder } from "@/lib/client/hg-local/embedder";
 import { buildIndex, type VectorIndex } from "@/lib/client/hg-local/search";
 import { firstSyncNeedsConsent, HgSyncError, syncOnce, type ConnectionHint, type HgTransport, type SyncProgress } from "@/lib/client/hg-local/sync";
@@ -66,7 +79,11 @@ export interface HangeulLocal {
   allowMobileData: () => void;
   /** "Re-sync everything": delete the copy and download it again (the panel confirms first). */
   resync: () => Promise<void>;
-  /** "Delete local copy": the only way to remove the data from a device; nothing syncs until enable(). */
+  /**
+   * "Delete local copy": the only way to remove the data from a device; nothing
+   * syncs, in any tab of this origin, until enable(). Rejects when the copy
+   * could not be deleted (it then stays on, with its real counts).
+   */
   deleteCopy: () => Promise<void>;
   /** Sync to this device again after a delete. */
   enable: () => void;
@@ -83,10 +100,20 @@ export interface HangeulLocalOptions {
   timeZone: string;
 }
 
-type Preference = "auto" | "off";
-const isPreference = (value: unknown): value is Preference => value === "auto" || value === "off";
-
 const transport: HgTransport = { snapshot: fetchHangeulSnapshot, changes: fetchHangeulChanges, runs: fetchHangeulRuns };
+
+const SYNC_LOCK = "jeannie-hg-sync";
+
+/**
+ * One sync at a time across the tabs of this origin (Web Locks, where the
+ * browser has them): a second tab waits, then finds the copy complete and
+ * only reads the change log, instead of downloading it a second time.
+ */
+function oneSyncAtATime(signal: AbortSignal, run: () => Promise<void>): Promise<void> {
+  const locks = typeof navigator === "undefined" ? undefined : (navigator as Partial<Pick<Navigator, "locks">>).locks;
+  if (!locks || typeof locks.request !== "function") return run();
+  return locks.request(SYNC_LOCK, { signal }, () => run()).then(() => undefined);
+}
 
 const INITIAL: HgLocalState = {
   phase: "waiting",
@@ -123,7 +150,7 @@ function failure(error: unknown): { blocked: boolean; text: string } {
 }
 
 export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLocalOptions): HangeulLocal {
-  const [pref, setPref] = usePersistentState<Preference>("jeannie.hg.device", "auto", isPreference);
+  const [pref, setPref] = usePersistentState<DevicePreference>(DEVICE_PREF_KEY, "auto", isDevicePreference);
   const [state, setState] = useState<HgLocalState>(INITIAL);
   const [storeReady, setStoreReady] = useState(false);
   const patch = useCallback((changes: Partial<HgLocalState>) => setState((prev) => ({ ...prev, ...changes })), []);
@@ -144,6 +171,9 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
   const lastStartRef = useRef(0);
   const checkingRef = useRef(false);
   const warmedRef = useRef(false);
+  /** "Delete local copy" is running in this tab: no sync may start meanwhile. */
+  const deletingRef = useRef(false);
+  const channelRef = useRef<DeviceChannel | null>(null);
   const live = useRef({ enabled, online, phone, pref });
   useEffect(() => {
     live.current = { enabled, online, phone, pref };
@@ -241,15 +271,76 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
     }, WARM_DELAY_MS);
   }, [embedder, ensureIndex]);
 
+  const stopSync = useCallback(async () => {
+    abortRef.current?.abort();
+    await syncRef.current?.catch(() => undefined);
+  }, []);
+
+  const forget = useCallback(() => {
+    metaRef.current = { ...EMPTY_META };
+    versionRef.current++;
+    indexRef.current = { index: null, version: -1, building: null };
+    warmedRef.current = false;
+  }, []);
+
+  /**
+   * Another tab changed the shared copy (device.ts): "off" stops this tab's
+   * sync and clears once more; "auto" (turned on again, or re-synced from
+   * scratch there) re-reads the store, so this tab never answers from a copy
+   * it believes complete while it is being downloaded again.
+   */
+  const followRemote = useCallback(
+    async (next: DevicePreference) => {
+      live.current = { ...live.current, pref: next };
+      setPref(next);
+      const store = storeRef.current;
+      if (!store) return;
+      try {
+        if (next === "off") {
+          embedderRef.current?.dispose();
+          embedderRef.current = null;
+          const counts = await followRemoteDelete(store, stopSync);
+          forget();
+          patch({ ...INITIAL, phase: "off", records: counts.records, chunks: counts.chunks });
+          return;
+        }
+        await stopSync();
+        const [meta, counts] = await Promise.all([store.meta(), store.counts()]);
+        forget();
+        metaRef.current = meta;
+        patch({
+          phase: meta.complete ? "ready" : "waiting",
+          complete: meta.complete,
+          progress: null,
+          records: counts.records,
+          chunks: counts.chunks,
+          syncedAt: meta.synced_at,
+          error: null,
+          model: modelState(meta.model_check),
+        });
+      } catch {
+        // The store could not be read or cleared here: the next sync or reload reads it again.
+      }
+    },
+    [forget, patch, setPref, stopSync],
+  );
+
   const sync = useCallback((): Promise<void> => {
     if (syncRef.current) return syncRef.current;
     const store = storeRef.current;
     const l = live.current;
-    if (!store || !l.enabled || !l.online || l.pref === "off") return Promise.resolve();
+    if (!store || deletingRef.current || !l.enabled || !l.online || l.pref === "off") return Promise.resolve();
+    // Deleted in another tab whose message never came: follow it, never download the copy again.
+    if (readDevicePreference() === "off") {
+      void followRemote("off");
+      return Promise.resolve();
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     lastStartRef.current = Date.now();
-    const run: Promise<void> = (async () => {
+    const allowed = () => !deletingRef.current && syncAllowed(live.current.pref, readDevicePreference());
+    const run: Promise<void> = oneSyncAtATime(controller.signal, async () => {
+      if (controller.signal.aborted || !allowed()) return;
       const before = await store.meta();
       const mayDownload = consentRef.current || !firstSyncNeedsConsent(connection(), live.current.phone);
       if (!before.complete && !mayDownload) {
@@ -263,6 +354,7 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
       try {
         const outcome = await syncOnce(store, transport, {
           signal: controller.signal,
+          allowed,
           onProgress: (progress) => {
             if (progress.phase === "snapshot") patch({ progress });
           },
@@ -285,19 +377,28 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
         // The model downloads once (~34 MB): on the first sync, or later on a connection that needs no consent.
         else if (check !== "mismatch" && (consentRef.current || !firstSyncNeedsConsent(connection(), live.current.phone))) void runModelCheck();
       } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
+        if (isAbortError(error) || controller.signal.aborted) {
+          // Stopped because another tab deleted the copy: clear what this sync wrote after that tab's clear.
+          if (live.current.pref !== "off" && readDevicePreference() === "off") void followRemote("off");
+          return;
+        }
         const meta = await store.meta().catch(() => metaRef.current);
         metaRef.current = meta;
         const f = failure(error);
         patch({ phase: f.blocked ? "blocked" : "error", complete: meta.complete, progress: null, error: f.text });
       }
-    })().finally(() => {
-      if (syncRef.current === run) syncRef.current = null;
-      if (abortRef.current === controller) abortRef.current = null;
-    });
+    })
+      // Cancelled while waiting for another tab's sync to finish.
+      .catch((error: unknown) => {
+        if (!isAbortError(error)) throw error;
+      })
+      .finally(() => {
+        if (syncRef.current === run) syncRef.current = null;
+        if (abortRef.current === controller) abortRef.current = null;
+      });
     syncRef.current = run;
     return run;
-  }, [patch, runModelCheck, warm]);
+  }, [followRemote, patch, runModelCheck, warm]);
 
   // On open (and whenever syncing becomes possible), on focus, every 5 minutes, and when the connection changes.
   useEffect(() => {
@@ -327,17 +428,15 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
 
   useEffect(() => () => embedderRef.current?.dispose(), []);
 
-  const stopSync = useCallback(async () => {
-    abortRef.current?.abort();
-    await syncRef.current?.catch(() => undefined);
-  }, []);
-
-  const forget = useCallback(() => {
-    metaRef.current = { ...EMPTY_META };
-    versionRef.current++;
-    indexRef.current = { index: null, version: -1, building: null };
-    warmedRef.current = false;
-  }, []);
+  // Another tab deleted the copy, re-synced it from scratch or turned it on again.
+  useEffect(() => {
+    const channel = openDeviceChannel((next) => void followRemote(next));
+    channelRef.current = channel;
+    return () => {
+      channel.close();
+      if (channelRef.current === channel) channelRef.current = null;
+    };
+  }, [followRemote]);
 
   const allowMobileData = useCallback(() => {
     consentRef.current = true;
@@ -353,25 +452,51 @@ export function useHangeulLocal({ enabled, online, phone, timeZone }: HangeulLoc
     consentRef.current = true;
     setPref("auto");
     live.current = { ...live.current, pref: "auto" };
+    // The other tabs re-read the store: the copy they had is being downloaded again.
+    channelRef.current?.announce("auto");
     patch({ ...INITIAL, phase: "waiting" });
     await sync();
   }, [forget, patch, setPref, stopSync, sync]);
 
+  /**
+   * "Delete local copy" (device.ts): stop this tab's sync, clear the store, and
+   * only then turn the copy off here, in storage and in the other tabs. A
+   * clear that fails keeps the copy on (with its real counts) and throws, so
+   * the panel says so instead of "deleted".
+   */
   const deleteCopy = useCallback(async () => {
-    setPref("off");
-    live.current = { ...live.current, pref: "off" };
-    await stopSync();
-    embedderRef.current?.dispose();
-    embedderRef.current = null;
-    await storeRef.current?.clear();
-    forget();
-    patch({ ...INITIAL, phase: "off" });
+    const store = storeRef.current;
+    if (!store) return;
+    deletingRef.current = true;
+    try {
+      const counts = await deleteDeviceCopy(store, {
+        stop: async () => {
+          await stopSync();
+          embedderRef.current?.dispose();
+          embedderRef.current = null;
+        },
+        turnOff: () => {
+          setPref("off");
+          live.current = { ...live.current, pref: "off" };
+          channelRef.current?.announce("off");
+        },
+      });
+      forget();
+      patch({ ...INITIAL, phase: "off", records: counts.records, chunks: counts.chunks });
+    } catch (error) {
+      const counts = await store.counts().catch(() => null);
+      patch({ error: "The copy on this device could not be deleted.", ...(counts ?? {}) });
+      throw error;
+    } finally {
+      deletingRef.current = false;
+    }
   }, [forget, patch, setPref, stopSync]);
 
   const enable = useCallback(() => {
     consentRef.current = true;
     setPref("auto");
     live.current = { ...live.current, pref: "auto" };
+    channelRef.current?.announce("auto");
     patch({ phase: "waiting", error: null });
     void sync();
   }, [patch, setPref, sync]);

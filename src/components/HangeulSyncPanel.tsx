@@ -10,10 +10,36 @@ import { HudPanel } from "./HudPanel";
 export const FIRST_SYNC_SIZE = "about 60 MB";
 export const MODEL_SIZE = "about 35 MB";
 
+/**
+ * Why the server does not serve the data to this browser, named as the Hangeul
+ * Data panel and the status row name it: still asking /api/status, not linked
+ * to Supabase, or locked (no access key on the server or in this browser).
+ */
+export interface SyncBlock {
+  kind: "checking" | "not_linked" | "locked";
+  text: string;
+}
+
+const BLOCK_HEADLINE: Record<SyncBlock["kind"], string> = { checking: "CHECKING…", not_linked: "NOT LINKED", locked: "LOCKED" };
+
+/** The block for the server's status (null while it is unknown), or null when the data is served here. */
+export function syncBlock(input: {
+  statusLoaded: boolean;
+  configured: boolean;
+  keyRequired: boolean;
+  hasAccessKey: boolean;
+}): SyncBlock | null {
+  if (!input.statusLoaded) return { kind: "checking", text: "Checking the server…" };
+  if (!input.configured) return { kind: "not_linked", text: "Not linked: set SUPABASE_URL and SUPABASE_SECRET_KEY." };
+  if (!input.keyRequired) return { kind: "locked", text: "Locked: set JEANNIE_ACCESS_KEY on the server (the data holds student records)." };
+  if (!input.hasAccessKey) return { kind: "locked", text: "Locked: access key required." };
+  return null;
+}
+
 interface HangeulSyncPanelProps {
   local: HangeulLocal;
-  /** Why the server does not serve the data to this browser (no key, not configured), or null. */
-  blocked: string | null;
+  /** Why the server does not serve the data to this browser (see syncBlock), or null. */
+  blocked: SyncBlock | null;
   /** Records in Supabase (from /api/status with the key), for the first sync's progress. */
   total: number | null;
   onNotice: (text: string) => void;
@@ -47,42 +73,32 @@ export function percent(records: number, total: number | null): number | null {
   return Math.max(0, Math.min(100, Math.round((records / total) * 100)));
 }
 
+export interface SyncPanelView {
+  led: string;
+  headline: string;
+  detail: string;
+  /** First-sync progress, 0-100 (null when unknown or not syncing). */
+  pct: number | null;
+  canResync: boolean;
+  /** Anything is on this device (its real counts), whatever the preference says. */
+  canDelete: boolean;
+}
+
 /**
- * The device copy of the Hangeul data (ticket 7): its state, and the only two
- * ways to change it: "Re-sync everything" and "Delete local copy".
+ * What the panel shows. "NOT ON THIS DEVICE" rests on the store's real
+ * counts, never on the preference alone: with syncing off but records still
+ * stored (a delete that failed, or a write that landed from another tab), it
+ * says so and Delete stays enabled.
  */
-export function HangeulSyncPanel({ local, blocked, total, onNotice }: HangeulSyncPanelProps) {
-  const { state } = local;
-  const [busy, setBusy] = useState(false);
+export function syncPanelView(state: HgLocalState, blocked: SyncBlock | null, total: number | null, busy: boolean): SyncPanelView {
   const pct = state.progress ? percent(state.progress.records, total) : null;
-
-  const resync = async () => {
-    if (!window.confirm(`Re-sync everything? The copy on this device is deleted and downloaded again (${FIRST_SYNC_SIZE}).`)) return;
-    setBusy(true);
-    try {
-      await local.resync();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!window.confirm("Delete the Hangeul data from this device? It stays in Supabase, and Jeannie answers from the server until you sync again.")) return;
-    setBusy(true);
-    try {
-      await local.deleteCopy();
-      onNotice("Hangeul: the copy on this device was deleted. Jeannie answers Hangeul questions from the server.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const stored = state.records > 0 || state.chunks > 0;
   let led = "";
   let headline: string;
   let detail: string;
   if (blocked) {
-    headline = "LOCKED";
-    detail = blocked;
+    headline = BLOCK_HEADLINE[blocked.kind];
+    detail = blocked.text;
   } else {
     switch (state.phase) {
       case "unsupported":
@@ -90,8 +106,14 @@ export function HangeulSyncPanel({ local, blocked, total, onNotice }: HangeulSyn
         detail = state.error ?? "This browser cannot keep a device copy; answers come from the server.";
         break;
       case "off":
-        headline = "NOT ON THIS DEVICE";
-        detail = "Deleted from this device. Answers come from the server.";
+        if (stored) {
+          led = "led-warn";
+          headline = `SYNC OFF · ${state.records.toLocaleString("en-US")} STILL HERE`;
+          detail = `Syncing is off, but ${state.records.toLocaleString("en-US")} records are still on this device. Delete local copy removes them.`;
+        } else {
+          headline = "NOT ON THIS DEVICE";
+          detail = "Deleted from this device. Answers come from the server.";
+        }
         break;
       case "consent":
         led = "led-warn";
@@ -121,9 +143,47 @@ export function HangeulSyncPanel({ local, blocked, total, onNotice }: HangeulSyn
         detail = "The first sync starts when the access key is loaded.";
     }
   }
+  return {
+    led,
+    headline,
+    detail,
+    pct,
+    canResync: !blocked && state.phase !== "unsupported" && !busy,
+    canDelete: state.phase !== "unsupported" && !busy && (stored || state.complete || state.phase === "syncing"),
+  };
+}
 
-  const canResync = !blocked && state.phase !== "unsupported" && !busy;
-  const canDelete = state.phase !== "unsupported" && state.phase !== "off" && !busy && (state.complete || state.records > 0 || state.phase === "syncing");
+/**
+ * The device copy of the Hangeul data (ticket 7): its state, and the only two
+ * ways to change it: "Re-sync everything" and "Delete local copy".
+ */
+export function HangeulSyncPanel({ local, blocked, total, onNotice }: HangeulSyncPanelProps) {
+  const { state } = local;
+  const [busy, setBusy] = useState(false);
+  const { led, headline, detail, pct, canResync, canDelete } = syncPanelView(state, blocked, total, busy);
+
+  const resync = async () => {
+    if (!window.confirm(`Re-sync everything? The copy on this device is deleted and downloaded again (${FIRST_SYNC_SIZE}).`)) return;
+    setBusy(true);
+    try {
+      await local.resync();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm("Delete the Hangeul data from this device? It stays in Supabase, and Jeannie answers from the server until you sync again.")) return;
+    setBusy(true);
+    try {
+      await local.deleteCopy();
+      onNotice("Hangeul: the copy on this device was deleted. Jeannie answers Hangeul questions from the server.");
+    } catch {
+      onNotice("Hangeul: the copy on this device could not be deleted. Try again, or clear this site's data in the browser settings.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <HudPanel title="Hangeul Sync" subtitle="기기 사본" icon={<DatabaseZap />} delay={0.42}>

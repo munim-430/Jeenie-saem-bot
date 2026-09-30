@@ -11,7 +11,7 @@ import { HudHeader } from "@/components/HudHeader";
 import { MemoryPanel } from "@/components/MemoryPanel";
 import { isLangMode } from "@/components/LanguageToggle";
 import { HangeulSyncNotice } from "@/components/HangeulSyncNotice";
-import { HangeulSyncPanel } from "@/components/HangeulSyncPanel";
+import { HangeulSyncPanel, syncBlock } from "@/components/HangeulSyncPanel";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { ReactorCore } from "@/components/ReactorCore";
 import { TacticalMetrics } from "@/components/TacticalMetrics";
@@ -370,17 +370,12 @@ export default function JeannieHud() {
               />
               <HangeulSyncPanel
                 local={hgLocal}
-                blocked={
-                  !statusLoaded
-                    ? "Checking the server…"
-                    : !system.status?.hangeul.configured
-                      ? "Not linked: set SUPABASE_URL and SUPABASE_SECRET_KEY."
-                      : !keyNeeded
-                        ? "Locked: set JEANNIE_ACCESS_KEY on the server (the data holds student records)."
-                        : !hasAccessKey
-                          ? "Locked: access key required."
-                          : null
-                }
+                blocked={syncBlock({
+                  statusLoaded,
+                  configured: Boolean(system.status?.hangeul.configured),
+                  keyRequired: keyNeeded,
+                  hasAccessKey,
+                })}
                 total={system.status?.hangeul.records ?? null}
                 onNotice={chat.notify}
               />

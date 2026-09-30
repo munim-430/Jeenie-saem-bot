@@ -8,7 +8,9 @@
 // replaces the record and all its chunks; a delete drops both.
 //
 // Pure: the transport (fetch with the access key) and the store (IndexedDB)
-// are injected, so the tests drive it with a fake feed and a Map.
+// are injected, so the tests drive it with a fake feed and a Map. `allowed`
+// (device.ts) is read before every request and write: a copy deleted in any
+// tab is never downloaded again by a sync that started before.
 
 // The wire formats are the server's own (ticket 4, "Wire formats"); type-only, so nothing server-side is bundled.
 import type { ChangesPage, SnapshotPage, WireChange, WireChunk } from "@/lib/hangeul/store";
@@ -40,6 +42,12 @@ export interface SyncOptions {
   onProgress?: (progress: SyncProgress) => void;
   /** Most change pages one sync reads; the rest waits for the next sync (default 100). */
   maxChangePages?: number;
+  /**
+   * Read before the sync starts and before each request and write: false (the
+   * copy was deleted, maybe in another tab) stops it with an AbortError, so a
+   * sync never downloads a deleted copy again.
+   */
+  allowed?: () => boolean;
 }
 
 export interface SyncOutcome {
@@ -64,8 +72,10 @@ export class HgSyncError extends Error {
 
 const refKey = (kind: string, key: string) => `${kind}\u0000${key}`;
 
-function aborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("Sync cancelled", "AbortError");
+/** Cancelled, or the copy was turned off (in any tab): stop before the next request or write. */
+function stopIfAsked(options: SyncOptions): void {
+  if (options.signal?.aborted) throw new DOMException("Sync cancelled", "AbortError");
+  if (options.allowed && !options.allowed()) throw new DOMException("The device copy is turned off", "AbortError");
 }
 
 function isRecord(value: unknown): value is HgRecord {
@@ -161,18 +171,20 @@ function isInvalidCursor(error: unknown): boolean {
 /** Pages through the snapshot into the store (resuming a first sync cut short). No-op when the copy is complete. */
 export async function runFirstSync(store: HgLocalStore, transport: HgTransport, options: SyncOptions = {}): Promise<{ pages: number; records: number; maxSeq: number }> {
   const now = options.now ?? (() => new Date());
+  stopIfAsked(options);
   const meta = await store.meta();
   if (meta.complete && meta.max_seq !== null) return { pages: 0, records: 0, maxSeq: meta.max_seq };
   let cursor = meta.snapshot_next;
   let seq = cursor ? meta.snapshot_seq : null;
   // A fresh start: nothing half-written from an earlier attempt may stay behind.
+  stopIfAsked(options);
   if (!cursor) await store.clear();
   let pages = 0;
   let records = 0;
   let chunks = 0;
   let restarted = false;
   for (;;) {
-    aborted(options.signal);
+    stopIfAsked(options);
     let raw: SnapshotPage;
     try {
       raw = await transport.snapshot(cursor, options.signal);
@@ -191,7 +203,7 @@ export async function runFirstSync(store: HgLocalStore, transport: HgTransport, 
       throw error;
     }
     const page = checkSnapshotPage(raw);
-    aborted(options.signal);
+    stopIfAsked(options);
     if (seq === null) seq = page.max_seq;
     const built = snapshotOps(page);
     const last = page.next === null;
@@ -220,6 +232,7 @@ export async function runDelta(
   options: SyncOptions = {},
 ): Promise<{ pages: number; upserts: number; deletes: number; behind: boolean; maxSeq: number }> {
   const now = options.now ?? (() => new Date());
+  stopIfAsked(options);
   const meta = await store.meta();
   if (!meta.complete || meta.max_seq === null) throw new HgSyncError("the device copy has no first sync yet");
   const limit = options.maxChangePages ?? 100;
@@ -229,9 +242,9 @@ export async function runDelta(
   let deletes = 0;
   let more = true;
   while (more && pages < limit) {
-    aborted(options.signal);
+    stopIfAsked(options);
     const page = checkChangesPage(await transport.changes(since, options.signal), since);
-    aborted(options.signal);
+    stopIfAsked(options);
     const built = changeOps(page.changes);
     more = page.more;
     await store.write({ ops: built.ops, meta: { max_seq: page.next_seq, ...(more ? {} : { synced_at: now().toISOString() }) } });
@@ -253,6 +266,7 @@ export async function runDelta(
  */
 export async function syncOnce(store: HgLocalStore, transport: HgTransport, options: SyncOptions = {}): Promise<SyncOutcome> {
   const now = options.now ?? (() => new Date());
+  stopIfAsked(options);
   const before = await store.meta();
   let snapshotPages = 0;
   let records = 0;
@@ -262,9 +276,10 @@ export async function syncOnce(store: HgLocalStore, transport: HgTransport, opti
     snapshotPages = first.pages;
     records = first.records;
   }
-  aborted(options.signal);
+  stopIfAsked(options);
   const runs = await transport.runs(options.signal);
   if (!Array.isArray(runs)) throw new HgSyncError("the runs returned malformed data");
+  stopIfAsked(options);
   await store.write({ ops: [], meta: { runs, runs_at: now().toISOString() } });
   const delta = await runDelta(store, transport, options);
   return { firstSync, snapshotPages, records, upserts: delta.upserts, deletes: delta.deletes, behind: delta.behind, maxSeq: delta.maxSeq };
