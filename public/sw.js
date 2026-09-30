@@ -9,7 +9,7 @@
 // response when there is one (sliced into a 206); otherwise they go to the
 // network untouched and the full clip is fetched in the background for next time.
 
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE = `jeannie-${VERSION}`;
 const SHELL_URL = "/";
 

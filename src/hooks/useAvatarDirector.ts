@@ -10,13 +10,16 @@ import type { ReplyEmote } from "@/lib/emote";
 // Generous: on a cold load the clip itself may take a few seconds to arrive.
 const ENDED_GRACE_MS = 5000;
 
+/** Longest a one-shot can take to hand back: it may first wait out one idle cycle (stage deferral). */
+export function oneShotDeadlineMs(clips: ClipTable, emote: Parameters<typeof clipNameFor>[0]): number {
+  return (clips[clipNameFor(emote)].duration + clips.idle.duration) * 1000 + ENDED_GRACE_MS;
+}
+
 export interface AvatarDirector {
   cue: ClipCue;
   clips: ClipTable;
   /** Reply / greeting / check-in emote: interrupts the loop, waits behind another one-shot. */
   play: (emote: ReplyEmote) => void;
-  /** Idle variation: dropped unless she is idle with nothing else to play. */
-  vary: (emote: ReplyEmote) => void;
   /** The stage finished the one-shot for `cue.key`. */
   ended: () => void;
 }
@@ -41,16 +44,12 @@ export function useAvatarDirector({ listening, speaking }: { listening: boolean;
   const { playing, seq } = state;
   useEffect(() => {
     if (!playing) return;
-    const timer = setTimeout(
-      () => dispatch({ type: "ended", seq }),
-      clips[clipNameFor(playing)].duration * 1000 + ENDED_GRACE_MS,
-    );
+    const timer = setTimeout(() => dispatch({ type: "ended", seq }), oneShotDeadlineMs(clips, playing));
     return () => clearTimeout(timer);
   }, [playing, seq, clips]);
 
   const play = useCallback((emote: ReplyEmote) => dispatch({ type: "emote", emote }), []);
-  const vary = useCallback((emote: ReplyEmote) => dispatch({ type: "vary", emote }), []);
   const ended = useCallback(() => dispatch({ type: "ended", seq }), [seq]);
 
-  return { cue: cueOf(state), clips, play, vary, ended };
+  return { cue: cueOf(state), clips, play, ended };
 }

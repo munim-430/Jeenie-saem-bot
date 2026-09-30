@@ -13,10 +13,11 @@
 // Playwright headless shell under /opt/pw-browsers when present, else HyperFrames' own).
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FPS, HEIGHT, WIDTH, compositionHtml, manifestEntry, planLoop, planSequence, rgbToHex, toFrames } from "./plan.mjs";
+import { encode, ffmpeg, poster, run } from "./ffmpeg.mjs";
+import { FPS, compositionHtml, manifestEntry, planLoop, planSequence, rgbToHex, toFrames } from "./plan.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SOURCE = join(ROOT, "assets/avatar/source");
@@ -41,17 +42,6 @@ const SHEETS = {
 };
 // Idle-segment placeholders: seconds of idle before dissolving back to its first frame.
 const SEGMENTS = { talking: 2.5, nod: 1.6 };
-
-function run(cmd, args, opts = {}) {
-  const res = spawnSync(cmd, args, { stdio: opts.quiet ? "pipe" : "inherit", encoding: "utf8", ...opts });
-  if (res.status !== 0) {
-    if (opts.quiet) process.stderr.write(res.stderr || res.stdout || "");
-    throw new Error(`${cmd} ${args.slice(0, 3).join(" ")}... exited with ${res.status}`);
-  }
-  return res.stdout;
-}
-
-const ffmpeg = (...args) => run("ffmpeg", ["-v", "error", "-y", ...args], { quiet: true });
 
 function probe(file) {
   const out = execFileSync(
@@ -84,20 +74,6 @@ function ssim(a, ia, b, ib) {
  * (found by aligning the first generated frame against idle's; mean abs diff 4.8/255).
  */
 const GENERATED_UNFRAME = "scale=720:1260:flags=lanczos,pad=720:1280:0:10,fillborders=top=10:bottom=10:mode=smear,";
-
-/** Final web encode: 720x1280 cover, 24 fps, H.264 yuv420p, no audio, faststart. */
-function encode(input, output, { prefilter = "" } = {}) {
-  ffmpeg(
-    "-i", input, "-an",
-    "-vf", `${prefilter}scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},fps=${FPS},format=yuv420p`,
-    "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-profile:v", "high", "-pix_fmt", "yuv420p",
-    "-movflags", "+faststart", output,
-  );
-}
-
-function poster(video, output) {
-  ffmpeg("-i", video, "-frames:v", "1", "-q:v", "3", output);
-}
 
 /** Backdrop colour: mean of the left and right edge strips beside the figure (the part cover-crop hides). */
 function sampleBackdrop(png) {
@@ -139,6 +115,16 @@ function renderHyperframes(name, plan, backdrop, assets, output) {
 }
 
 function main() {
+  // Legacy pipeline: it rebuilds idle, talking, concern and sadness from assets/avatar/source.
+  // Once the Kling set is ingested (scripts/avatar-clips/ingest-kling.mjs) it must not overwrite it.
+  const current = join(OUT, "manifest.json");
+  if (existsSync(current) && !process.argv.includes("--force")) {
+    const entries = Object.values(JSON.parse(readFileSync(current, "utf8")));
+    if (entries.some((entry) => entry?.source === "kling")) {
+      console.error("public/avatar holds Kling clips: run `npm run avatar:ingest` instead (or pass --force to rebuild the legacy set).");
+      process.exit(1);
+    }
+  }
   mkdirSync(OUT, { recursive: true });
   mkdirSync(WORK, { recursive: true });
   const manifest = {};

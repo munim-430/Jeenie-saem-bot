@@ -490,8 +490,9 @@
   object-position: center bottom;
   opacity: 0;
   transform-origin: 50% 30%;
+  /* Matches FADE_MS in AvatarStage.tsx. */
   transition:
-    opacity 150ms linear,
+    opacity 400ms ease-in-out,
     transform 600ms ease;
   pointer-events: none;
 }
@@ -644,4 +645,32 @@
   .avatar-stage[data-focus="true"] .avatar-video {
     transform: none;
   }
+}
+
+/* Preview-only QA emote picker (EmotePicker): never rendered on production. */
+.emote-picker {
+  position: absolute;
+  /* Below her face: the picker must not hide what is being checked. */
+  top: 38%;
+  right: 0.5rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  max-width: 42vw;
+}
+.emote-picker button {
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: #fff;
+  background: rgba(35, 16, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.emote-picker-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }

@@ -69,6 +69,8 @@ describe("service worker", () => {
     expect(strategy("/api/chat")).toBe("network-only");
     expect(strategy("/api/greeting?awayMs=5")).toBe("network-only");
     expect(strategy("/avatar/idle.mp4")).toBe("cache-first");
+    // Versioned clip URLs (CLIP_VERSION) stay cache-first; the query only changes the cache key.
+    expect(strategy("/avatar/idle.mp4?v=k3")).toBe("cache-first");
     expect(strategy("/avatar/air_kiss.jpg")).toBe("cache-first");
     expect(strategy("/icons/icon-192.png")).toBe("cache-first");
     expect(strategy("/_next/static/chunks/main.js")).toBe("stale-while-revalidate");

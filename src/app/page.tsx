@@ -172,18 +172,17 @@ export default function JeannieHud() {
 
   // She bows on every load, the first time her screen is up.
   const bowedRef = useRef(false);
-  const { play: playEmote, vary: varyEmote } = director;
+  const { play: playEmote } = director;
   useEffect(() => {
     if (!avatarMode || bowedRef.current) return;
     bowedRef.current = true;
     playEmote("greeting");
   }, [avatarMode, playEmote]);
 
-  // Idle behaviour (avatar screen only): a nod now and then, one check-in after ~3 min.
+  // Idle behaviour (avatar screen only): one spoken check-in after ~3 min (the director plays the idle sequence).
   useIdleWatch({
     enabled: avatarMode,
     busy: speech.speaking || speech.preparing || recognition.listening || chat.phase !== "idle",
-    onVariation: () => varyEmote("nod"),
     onCheckIn: () => {
       const line = pickCheckIn();
       chat.announce(line, "ko");
@@ -255,6 +254,8 @@ export default function JeannieHud() {
           subtitleLive={latestReply?.status === "streaming" || speech.speaking || speech.preparing}
           recognition={voiceInput}
           onSwitchToHud={() => viewMode.setView("hud")}
+          voiceLevel={speech.getLevel}
+          voiceMeasured={speech.routed}
         />
       ) : (
         // The server renders the HUD (desktop unchanged); phones keep it hidden until the view is known.

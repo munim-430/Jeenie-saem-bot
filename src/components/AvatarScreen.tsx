@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
@@ -22,11 +23,45 @@ interface AvatarScreenProps {
   subtitleLive: boolean;
   recognition: SpeechRecognitionState;
   onSwitchToHud: () => void;
+  /** Her voice's output level (0..1) and whether it is measured from the real audio. */
+  voiceLevel: () => number;
+  voiceMeasured: boolean;
 }
 
-export function AvatarScreen({ director, subtitle, subtitleLive, recognition, onSwitchToHud }: AvatarScreenProps) {
+/** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
+const VOICE_TEST_PATTERN_MS = { on: 1200, off: 800, cycles: 4 };
+const TALKING_CUE = { emote: "talking", key: "talking", loop: true, focus: false } as const;
+
+export function AvatarScreen({
+  director,
+  subtitle,
+  subtitleLive,
+  recognition,
+  onSwitchToHud,
+  voiceLevel,
+  voiceMeasured,
+}: AvatarScreenProps) {
   const hold = useHoldToTalk(recognition);
   const [lingering, setLingering] = useState(true);
+
+  // Preview-only QA: plays talking against a scripted voice level so the mouth rests can be
+  // checked on a phone without waiting for a real spoken reply.
+  const [voiceTest, setVoiceTest] = useState(false);
+  const voiceTestStart = useRef(0);
+  const startVoiceTest = useCallback(() => {
+    voiceTestStart.current = performance.now();
+    setVoiceTest(true);
+  }, []);
+  useEffect(() => {
+    if (!voiceTest) return;
+    const { on, off, cycles } = VOICE_TEST_PATTERN_MS;
+    const timer = setTimeout(() => setVoiceTest(false), (on + off) * cycles);
+    return () => clearTimeout(timer);
+  }, [voiceTest]);
+  const testLevel = useCallback(() => {
+    const { on, off } = VOICE_TEST_PATTERN_MS;
+    return (performance.now() - voiceTestStart.current) % (on + off) < on ? 0.5 : 0;
+  }, []);
 
   useEffect(() => {
     setLingering(true);
@@ -40,7 +75,15 @@ export function AvatarScreen({ director, subtitle, subtitleLive, recognition, on
 
   return (
     <div className="avatar-screen fixed inset-0 z-20 overflow-hidden">
-      <AvatarStage className="absolute inset-0" cue={director.cue} clips={director.clips} onEnded={director.ended} />
+      <AvatarStage
+        className="absolute inset-0"
+        cue={voiceTest ? TALKING_CUE : director.cue}
+        clips={director.clips}
+        onEnded={director.ended}
+        voiceLevel={voiceTest ? testLevel : voiceLevel}
+        voiceMeasured={voiceTest || voiceMeasured}
+      />
+      <EmotePicker director={director} onVoiceTest={startVoiceTest} voiceTestRunning={voiceTest} />
 
       <div className="pointer-events-none absolute inset-x-0 bottom-[calc(7.5rem+env(safe-area-inset-bottom))] flex flex-col items-center gap-3 px-4">
         {heard ? <p className="avatar-heard">{heard}</p> : null}

@@ -11,19 +11,18 @@ interface IdleWatchOptions {
   enabled: boolean;
   /** Speaking, listening or waiting for a reply: not silence. */
   busy: boolean;
-  onVariation: () => void;
   onCheckIn: () => void;
 }
 
-/** Fires idle variations and the one-off check-in; any interaction resets it. */
-export function useIdleWatch({ enabled, busy, onVariation, onCheckIn }: IdleWatchOptions): void {
+/** Fires the one-off check-in after a long silence; any interaction resets it. */
+export function useIdleWatch({ enabled, busy, onCheckIn }: IdleWatchOptions): void {
   const stateRef = useRef<IdleState | null>(null);
   const busyRef = useRef(busy);
-  const callbacksRef = useRef({ onVariation, onCheckIn });
+  const callbacksRef = useRef({ onCheckIn });
 
   useEffect(() => {
     busyRef.current = busy;
-    callbacksRef.current = { onVariation, onCheckIn };
+    callbacksRef.current = { onCheckIn };
   });
 
   useEffect(() => {
@@ -45,8 +44,7 @@ export function useIdleWatch({ enabled, busy, onVariation, onCheckIn }: IdleWatc
       }
       const { state, action } = idleStep(current, now);
       stateRef.current = state;
-      if (action === "variation") callbacksRef.current.onVariation();
-      else if (action === "check-in") callbacksRef.current.onCheckIn();
+      if (action === "check-in") callbacksRef.current.onCheckIn();
     }, TICK_MS);
 
     return () => {
