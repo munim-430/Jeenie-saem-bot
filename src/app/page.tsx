@@ -28,6 +28,7 @@ import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
 import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
+import { spokenText } from "@/lib/client/speech-text";
 import type { LangMode } from "@/lib/types";
 import { cn, resolveLanguage } from "@/lib/utils";
 
@@ -102,7 +103,8 @@ export default function JeannieHud() {
     onEmote: (emote) => director.play(emote),
     onReplyComplete: (reply) => {
       // Not while the mic is open: she would be transcribed into the operator's next message.
-      if (voiceOnRef.current && !listeningRef.current) speech.speak(reply.text, reply.lang);
+      // A Hangeul reply is never sent to the voice engines (student data): a fixed line is spoken instead.
+      if (voiceOnRef.current && !listeningRef.current) speech.speak(spokenText(reply.text, reply.agent, reply.lang), reply.lang);
     },
     onAccessKeyRequired: (rejected) => setKeyDialog({ open: true, reason: rejected ? "rejected" : "required" }),
     prepareHangeul: async ({ question, lang: mode, previous }) => {

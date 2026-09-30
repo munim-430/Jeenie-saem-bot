@@ -3,8 +3,27 @@
 // data dumps (Hangeul fact and table bullets, "as of" lines, timestamps), and at
 // most SPEECH_MAX_CHARS characters cut at a sentence boundary.
 
-import type { ResolvedLang } from "@/lib/types";
+import type { AgentId, ResolvedLang } from "@/lib/types";
 import { detectLanguage, stripMarkdownForSpeech } from "@/lib/utils";
+
+/**
+ * What a Hangeul reply says out loud. The voice goes to /api/tts, whose engines
+ * are ElevenLabs and Microsoft Edge TTS: third parties the spec's accepted risks
+ * (D11) do not name. A Hangeul headline holds student names, HNG ids and portal
+ * uids, or every consultant's name, so the reply is not read aloud; this line
+ * is, and the figures stay on the screen.
+ */
+export const HANGEUL_SPOKEN_LINE = {
+  en: "The answer is on your screen.",
+  ko: "답을 화면에 띄워 드렸어요.",
+} as const;
+
+/** The text to speak for a finished reply of `agent`: a Hangeul reply becomes HANGEUL_SPOKEN_LINE in its language. */
+export function spokenText(text: string, agent: AgentId | null | undefined, lang: ResolvedLang | null): string {
+  if (agent !== "hangeul") return text;
+  if (lang === "bilingual") return `${HANGEUL_SPOKEN_LINE.en}\n—\n${HANGEUL_SPOKEN_LINE.ko}`;
+  return lang === "ko" ? HANGEUL_SPOKEN_LINE.ko : HANGEUL_SPOKEN_LINE.en;
+}
 
 export type SpeechLang = "en" | "ko";
 

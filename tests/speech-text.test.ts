@@ -3,7 +3,7 @@ import { formatSearchBriefing } from "@/lib/agents/search-agent";
 import { planFor, renderAnswer, runPlan } from "@/lib/hangeul/answer";
 import { readersFromRecords } from "@/lib/hangeul/memory-readers";
 import { NOW, records, runs, TZ } from "./hangeul-fixtures";
-import { clipAtSentence, SPEECH_MAX_CHARS, speechSegments } from "@/lib/client/speech-text";
+import { clipAtSentence, HANGEUL_SPOKEN_LINE, SPEECH_MAX_CHARS, speechSegments, spokenText } from "@/lib/client/speech-text";
 import type { SearchResponse } from "@/lib/types";
 
 const spoken = (text: string, lang: Parameters<typeof speechSegments>[1] = "en") =>
@@ -68,6 +68,26 @@ describe("speechSegments: what is read aloud", () => {
 
     const both = speechSegments(await hangeulAnswer("how many consultancies were closed today?", "bilingual"), "bilingual");
     expect(both.map((s) => s.lang)).toEqual(["en", "ko"]);
+  });
+
+  it("a Hangeul reply is never sent to the voice engines: a fixed line is spoken, no student name or id", async () => {
+    // The student card's headline would be "TEST STUDENT ONE (HNG-2026-012, portal uid 101): Documents Verified."
+    const card = await hangeulAnswer("Who is HNG-2026-12?", "en");
+    expect(card).toContain("TEST STUDENT ONE (HNG-2026-012, portal uid 101)");
+    for (const lang of ["en", "ko", "bilingual"] as const) {
+      const text = await hangeulAnswer("Who is HNG-2026-12?", lang);
+      const said = speechSegments(spokenText(text, "hangeul", lang), lang).map((s) => s.text).join(" ");
+      for (const secret of ["TEST STUDENT", "HNG-2026", "101", "A00000001", "01700000001", "TEST CONSULTANT"]) expect(said).not.toContain(secret);
+    }
+    expect(speechSegments(spokenText(card, "hangeul", "en"), "en")).toEqual([{ text: HANGEUL_SPOKEN_LINE.en, lang: "en" }]);
+    expect(speechSegments(spokenText(card, "hangeul", "ko"), "ko")).toEqual([{ text: HANGEUL_SPOKEN_LINE.ko, lang: "ko" }]);
+    expect(speechSegments(spokenText(card, "hangeul", "bilingual"), "bilingual").map((s) => s.text)).toEqual([HANGEUL_SPOKEN_LINE.en, HANGEUL_SPOKEN_LINE.ko]);
+    // The owner's question: every consultant's name is in its headline.
+    const owner = await hangeulAnswer("how many consultancies were closed today?", "en");
+    expect(spokenText(owner, "hangeul", "en")).not.toContain("TEST CONSULTANT");
+    // Every other agent's reply is spoken as before.
+    expect(spokenText("Seoul is sunny today.", "search", "en")).toBe("Seoul is sunny today.");
+    expect(spokenText("Yes, it is done.", null, "en")).toBe("Yes, it is done.");
   });
 
   it("reads a Hangeul data-status answer without its run table", async () => {
