@@ -64,6 +64,11 @@ describe("the owner's performance phrasings (Hangeul BOT's own, pack 05)", () =>
     ["performance today", today],
     ["perfomance today", today],
     ["performances today", today],
+    // The rest of the bot's _PERFORMANCE_WORDS misspellings.
+    ["performace today", today],
+    ["perfromance this month", month],
+    ["preformance today", today],
+    ["perfomence this month", month],
     ["how did the team do today", today],
     ["how's the team doing?", today],
     ["performance", today],

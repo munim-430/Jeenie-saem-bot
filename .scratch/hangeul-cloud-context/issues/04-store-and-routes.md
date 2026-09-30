@@ -99,3 +99,18 @@ Again at 1 Oct 01:56-02:06 Dhaka (same read-only calls): snapshot page 1 was 491
 UTF-8, in 2.1 s, `max_seq` 13553; the changes after `max_seq - 50` were 50 rows, 172 KB, in 0.2 s, `more` false.
 
 ## Comments
+
+- 1 Oct 2026 (review fixes, "snapshot pages that finish in time, and a sealed cursor"): from this PC the first sync failed part-way at the default timeouts (500 chunks
+  with content and vector, 1.6-2.1 MB, often took over the 10 s that covered the body read), and the body-read
+  timeout surfaced as a bare "unreachable". Chunks are now read 100 a request, records 200 a batch (60 for the OCR
+  pages); a page has a time budget inside the route's 60 s (no new batch after 30 s, no request past 50 s, a batch
+  that times out after others ends the page with those), and a body that stops arriving is "unreachable
+  (timeout)". The cursor held the last record key (a passport number and a file name) in the GET query string: it
+  is now sealed with AES-256-GCM under a key derived by HKDF from the server's secret key, and the device starts its
+  first sync over once when the server refuses a saved cursor (a rotated key). The cron bearer no longer unlocks
+  student data through the chat on a deployment without JEANNIE_ACCESS_KEY ("the cron bearer never unlocks student
+  data through the chat").
+- 1 Oct 2026, 04:1x Dhaka, live and read-only after the fixes (`readSnapshotPage` from this PC, default timeouts):
+  the whole dump in 20 pages, 13,546 records and 15,635 chunks, 364 s, every page between 11 and 29 s (the slowest
+  28.5 s, inside the 60 s route limit); every cursor 80-155 characters, opaque. Still to check: the page time from
+  the Vercel region, before the owner's first sync (ticket 8).

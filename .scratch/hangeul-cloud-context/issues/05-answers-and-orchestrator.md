@@ -142,3 +142,23 @@ The same code against the live rows, through `answerHangeul` with the Supabase s
   is not deployed).
 
 ## Comments
+
+- 1 Oct 2026 (review fixes, "route the owner's performance phrasings; date answers by the runs that read them" and
+  "never send a Hangeul reply to the voice engines"): the owner's own performance phrasings ("this month's performance",
+  "today's performance", "performence this month", "how did the team do today", "team activity"...) and the bot's
+  misspellings are routed; "student visa requirements", "student life", consultancy fees, a doctor's consultations
+  and "consultancies in Dhaka" are not. Ranges ("this week", "the last 7 days") say that the portal shows only today
+  and this month and add the requests day by day; a passport range filters by day. The prose number check compares
+  typed tokens (a time only allows that time, a date that date), so the as-of line's 02:35 no longer lets "35
+  consultancies" through. Consultation requests of a day are dated by the runs that re-read that day (full picture
+  on D or D+1, a command on D, the backfill) or their own read_at; a missing brief is not dated by another report's
+  run; the passport table's names are looked up for the rows it shows; a blank "Consultancies done" tile is Korean
+  in the Korean headline. A Hangeul reply is never sent to the voice engines (ElevenLabs, Edge TTS): a fixed line
+  is spoken instead.
+- 1 Oct 2026, 04:1x Dhaka, live and read-only (server path, no model): "how many consultancies were closed today?"
+  → "Consultancies done today (1 Oct): 0." and "Requests received today (1 Oct): 0.", the tiles, "By consultant:
+  none", "As of 03:35 (full picture)"; the prose "Your team closed 35 / 2 / 20 consultancies today." is dropped
+  each time. "…this week?" → not on the portal, 100 requests received 25 Sep – 1 Oct by day and by status, each
+  day's Today window on file, "As of 30 Sep 23:35 (full picture) · backfill 30 Sep 22:05". "how many inquiries on
+  12 Sep?" → "As of 30 Sep 22:05 (backfill)". "daily brief" → not available yet, the dashboard's figures, "As of
+  03:35 (full picture)". "passport alerts" → the newest problem scans first, each with its student's name.
