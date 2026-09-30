@@ -149,6 +149,8 @@ export interface SystemStatus {
   telegram: { configured: boolean };
   /** The Hangeul data in Supabase. `records` and `lastRuns` only for a caller with the access key (else null). */
   hangeul: { configured: boolean; records: number | null; lastRuns: HangeulRunSummary[] | null };
+  /** The business time zone (JEANNIE_TIMEZONE): Hangeul days and "as of" times, also for answers built on the device. */
+  timeZone: string;
   time: string;
 }
 

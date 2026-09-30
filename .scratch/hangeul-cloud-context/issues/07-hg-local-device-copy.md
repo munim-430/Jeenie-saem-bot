@@ -1,6 +1,6 @@
 # hg-local: the device copy, local search and the model check
 
-Status: ready-for-agent (the PWA work on saem/hangeul-context-reader)
+Status: ready-for-human (implemented on saem/hangeul-context-reader; owner review, merge and deploy; see the owner flags below)
 
 Ticket 7 of the spec's §10. See spec §6 (local store, local search, embed-model check, settings), D9, D12, D13, D14.
 Blocked by: none (ticket 4's routes and ticket 5's isomorphic answer code are done).
@@ -34,9 +34,120 @@ Blocked by: none (ticket 4's routes and ticket 5's isomorphic answer code are do
 - **Settings** panel "Hangeul data" in `TacticalMetrics` children (copy `MemoryPanel`): "Re-sync everything" and
   "Delete local copy" (confirm first), the only way to remove the data from a device.
 
+## What was built
+
+- `package.json`: `@huggingface/transformers` **4.3.0** (exact), the only new dependency. `.npmrc` sets
+  `onnxruntime-node-install=skip` (see owner flag 1). `next.config.mjs`: the webpack aliases above.
+- `src/lib/client/hg-local/db.ts`: the `HgLocalStore` interface, `openIndexedDbStore()` (database `jeannie-hg`,
+  stores `records` [kind, key], `chunks` [kind, key, ord], `meta` by name) and `createMemoryStore()` for the tests.
+  Every write is one transaction: a page of the snapshot or of the change log lands whole with its cursor, or not
+  at all. A record's chunks are one key range, `[kind, key]` to `[kind, key, []]`; a kind's records,
+  `[kind]` to `[kind, []]`. A chunk keeps no copy of its record's text (as on the wire) and carries the record's
+  `day` and `student_uid`, so search filters without reading records. `requestPersistentStorage()` asks
+  `navigator.storage.persist()` when the first sync starts.
+- `sync.ts`: `runFirstSync` (snapshot pages, the first page's `max_seq`, resumes at its saved cursor after an
+  interruption, clears half-written data on a fresh start), `runDelta` (the change log in seq order while `more`;
+  an upsert whose record is null is skipped, its delete follows), `syncOnce` (first sync if needed, then the
+  **runs**, then the changes), `firstSyncNeedsConsent` (cellular or data saver asks; Wi-Fi and Ethernet do not; a
+  phone whose browser cannot tell asks). Malformed pages and vectors fail closed (`HgSyncError`), cursor unchanged.
+- `search.ts`: `buildIndex` (one `Float32Array`, rows normalised), `searchIndex` (top 12 by cosine, filtered by
+  kinds, student and day range), `hitRecords` (best chunk per record, within 0.04 of the best, at most 5: the
+  server's own search shows 5 cards).
+- `check.ts`: `pickCheckSamples` (three stored chunks of different kinds, 20-1,500 characters, a chunk with no text
+  takes its record's) and `checkEmbedModel` (ok at cosine ≥ 0.98; `mismatch` logs the minimum, numbers only, and
+  search stays on the server; `unavailable` when the model did not load: checked again later).
+- `embed-protocol.ts`, `embed.worker.ts`, `embedder.ts`: the worker loads `Supabase/gte-small` with `dtype: "q8"` on
+  WASM, `pooling: "mean", normalize: true`; the model comes from the Hugging Face Hub (cached by the browser in
+  `transformers-cache`, which the service worker keeps), never from Jeannie's origin. Requests time out (3 min for
+  the first load on a phone, 8 s a question).
+- `readers.ts`: `deviceReaders(store, runs)`, `HangeulReaders` over IndexedDB with the server's filter meaning
+  (`filter.ts`) and the synced runs.
+- `ask.ts`: `prepareHangeul` decides, per question, in the server router's order (smart-home and mistake audits
+  first, `routesToHangeul`):
+  - a structured plan renders on the device (`planFor`, `runPlan`, `renderAnswer`) when the copy caught up within 6
+    minutes, holds the runs and found something;
+  - a semantic plan is embedded on the device and searched locally; the vector (base64) and the hits go to the
+    server;
+  - everything else goes to the server as a plain question: `SERVER_ONLY_INTENTS`, a stale copy, Korean or Bangla
+    searches (the server rewrites them first), a model check that did not pass, and a device answer that found
+    nothing (absence may only be the copy lagging).
+- `src/hooks/useHangeulLocal.ts`: opens the store, syncs on open, on focus (at most every 30 s), every 5 minutes
+  while visible and when the connection changes; asks before the first sync on mobile data; runs the model check
+  after the first sync; warms the model and the index; `resync`, `deleteCopy`, `enable`, `prepare`.
+- `src/hooks/useJeannieChat.ts`: `prepareHangeul` option: a device answer is shown at once as a Hangeul reply
+  (provider "none", no request, spoken like any reply); hints go out as `hangeul: {embedding, hits}` in
+  `POST /api/chat`. It gives up after 6 s and asks the server.
+- `src/components/HangeulSyncPanel.tsx` ("Hangeul Sync" / 기기 사본, in `TacticalMetrics` children after Memory):
+  state, first-sync progress, where search runs, **Re-sync everything** and **Delete local copy** (both confirm
+  first), DOWNLOAD NOW on mobile data, SYNC TO THIS DEVICE after a delete.
+  `src/components/HangeulSyncNotice.tsx`: the same consent question and progress on the phone's avatar screen.
+- Server: `GET /api/hangeul/runs` (`{runs}`: `readRuns(HG_KINDS)`, same gate, no student data) and
+  `GET /api/status` `timeZone` (the business time zone, `JEANNIE_TIMEZONE`).
+
+## Decisions (recorded here, not re-proposed)
+
+1. **The device syncs the runs** (`GET /api/hangeul/runs`, new). Without them a device answer could only be dated
+   by the rows' `read_at`, which does not move when content is unchanged, and a kind with no rows would read "not
+   available yet" instead of 0. The runs are read before the change log each sync, so every run that dates an
+   answer has all its changes in what the device then applies.
+2. **Device hits go through `POST /api/chat`** (`hangeul: {embedding, hits}`, the ticket's second option): the same
+   server code as `/api/hangeul/ask` (`answerHangeul`), with the conversation, the persona and the chat's streaming
+   contract. `/api/hangeul/ask` is unchanged for other callers.
+3. **A device answer has no prose.** It is the code-built answer alone (the server's answer without a model), shown
+   at once; questions that need the model's words or fresh server state go to the server.
+4. **Consent is per page load.** A yes to downloading on mobile data is not remembered; a first sync cut short
+   resumes and asks again on mobile data. "Re-sync everything" confirms in its own dialog.
+5. **"Delete local copy" stays deleted**: a per-browser flag (`jeannie.hg.device` = "off") stops every sync until
+   "Sync to this device". Signing out of the key does not delete the copy (spec: accepted risk).
+
+## Owner flags
+
+1. `@huggingface/transformers` pulls `onnxruntime-node`, whose install script downloads CUDA binaries from NuGet on
+   Linux x64 (Vercel's builders), and a failed download fails the install. The committed `.npmrc` sets
+   `onnxruntime-node-install=skip` (checked: npm hands it to the script as `npm_config_onnxruntime_node_install`).
+   Jeannie never runs the Node backend.
+2. The build emits onnxruntime-web's 27 MB `.wasm` under `/_next/static/media/`, but transformers.js loads the WASM
+   and its glue from `cdn.jsdelivr.net` (its default) and the model from `huggingface.co`, so the emitted file is
+   never fetched. Aliasing `onnxruntime-web/webgpu` to its extern-WASM build would drop it; not done without a
+   phone test.
+3. The model check has not run on a real device yet (no model download here): it is part of ticket 8. A mismatch
+   only moves search to the server.
+
 ## Tests
 
-`tests/hg-local.test.ts`: sync applies upserts and deletes from a fake changes feed; cosine search returns the right
-record; a model mismatch falls back to the server. Synthetic data only.
+`tests/hg-local.test.ts` (synthetic data, a fake snapshot and change feed, no network), each sync test against the
+in-memory store **and** the real IndexedDB code over `tests/idb-shim.ts` (an in-memory IndexedDB with the spec's key
+order; the repo has no fake-indexeddb and this ticket allows one dependency): the first sync (pages, `max_seq`,
+progress, chunk text left out, Float32Array vectors), resuming a first sync cut short, the change log applying
+upserts and deletes in seq order across pages (a changed record's old chunk removed, delete-then-recreate,
+added-then-deleted), runs before changes, malformed pages and vectors failing closed, `clear()`. Cosine search returns
+the right record (and chunk), with kind, student and day filters; `hitRecords`. The model check passes on matching
+vectors; **a mismatch falls back to the server** with no device vector or hits (and logs numbers only); a passing
+check sends the device's vector and the right hit; a model that does not load is `unavailable`. A structured answer on
+the device is the server's answer, word for word, for the owner's question (and in Korean); server-only intents, an
+empty result, Korean searches, a stale copy, no copy and an unreadable copy go to the server; the device and the
+server's router agree on what is a Hangeul question. Mobile-data consent. `tests/hangeul-routes.test.ts`: the runs
+route (gate, no student data, 502).
+
+## Live check (1 Oct 02:43-02:44 Dhaka, read-only: the route handlers over PostgREST selects and hg_changes_since)
+
+The phone's sync code, run in Node against the live project through the same route handlers the phone calls
+(snapshot, runs, changes), into the in-memory store; names masked:
+
+- First sync: 20 pages, 13,546 records, 15,635 chunks, 56.9 MB of JSON, 49 s (slowest page 6.0 s); `max_seq`
+  13553; 31 runs; one embed model (`thenlper/gte-small`). Per kind: student 340, consultation 1,035, consultant
+  performance 17, doc verdict 2,717, field check 3,490, doc page text 3,469, passport alert 311, report 3, report
+  section 434.
+- Index of all 15,635 vectors built in 23 ms; one search 9.9 ms (PC); a stored vector finds its own chunk first
+  (1.0000).
+- On the device copy: "how many consultancies were closed today?" → "Consultancies done today (1 Oct): 0.", "As of
+  02:35 (full picture)"; "…done yesterday?" → "Consultancies done yesterday (30 Sep): 20 — <consultants>", "As of 30
+  Sep 23:35 (consultant performance, full picture) · consultation requests 02:35 (full picture)"; "Hangeul daily
+  report" → "Daily brief: not available yet.", "As of 02:43 (portal sync) · full picture 02:35". **Each is the
+  server's answer word for word.** "Any passport alerts today?" found nothing checked today on the device, so it goes
+  to the server (by design).
 
 ## Comments
+
+- 1 Oct 2026: built on saem/hangeul-context-reader with ticket 6. `npx vitest run` 1169 passed and 8 skipped; `tsc`,
+  `npm run lint` and `npm run build` are clean.

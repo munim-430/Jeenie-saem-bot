@@ -647,6 +647,80 @@
   }
 }
 
+/* "Offline: Jeannie needs a connection" (OfflineBanner), over both views. */
+.offline-banner-region {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 50;
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.95rem;
+  border: 1px dashed var(--neon-hot);
+  border-radius: 999px;
+  background: rgba(10, 5, 10, 0.9);
+  color: #fbcfe8;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  box-shadow: 0 0 16px rgba(255, 0, 127, 0.35);
+  pointer-events: auto;
+}
+.offline-banner[data-variant="avatar"] {
+  border: 1px solid #ff007f;
+  background: rgba(255, 255, 255, 0.9);
+  color: #5b2a40;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  box-shadow: 0 6px 20px rgba(59, 31, 43, 0.25);
+}
+
+/* The avatar screen's Hangeul sync notice (consent on mobile data, first-sync progress). */
+.hg-sync-notice {
+  position: fixed;
+  top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.75rem);
+  left: 50%;
+  z-index: 45;
+  width: min(22rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  padding: 0.6rem 0.85rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: #5b2a40;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  box-shadow: 0 6px 20px rgba(59, 31, 43, 0.25);
+}
+.hg-sync-notice button {
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  border: 1px solid #ff007f;
+}
+.hg-sync-notice button[data-primary="true"] {
+  background: #ff007f;
+  color: #fff;
+}
+.hg-sync-bar {
+  height: 4px;
+  margin-top: 0.4rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 0, 127, 0.18);
+}
+.hg-sync-bar > span {
+  display: block;
+  height: 100%;
+  background: #ff007f;
+  transition: width 300ms ease;
+}
+
 /* Preview-only QA emote picker (EmotePicker): never rendered on production. */
 .emote-picker {
   position: absolute;

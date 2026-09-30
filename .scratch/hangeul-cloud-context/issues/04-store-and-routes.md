@@ -69,8 +69,11 @@ embedding, embed_model}`: `embedding` is base64 of 384 little-endian float32 (2,
   records from current rows; with only `embedding`, it searches with it (`hg_match`).
 - `GET /api/hangeul` → `{configured: true, records, lastRuns: [{job, finishedAt, status}], latestBrief: {key, report,
   day, read_at} | null, latestReport: {…} | null}` (no student data).
+- `GET /api/hangeul/runs` (added by ticket 7) → `{runs: HgRun[]}`: `{job, started_at, finished_at, status, byKind,
+  failedReads}`, the newest 200 finished runs plus the newest run of every kind none of them read. A device syncs
+  them before each change-log read, to date its answers. No student data.
 - `GET /api/status` (open) → `hangeul: {configured, records: number | null, lastRuns: [{job, finishedAt, status}] |
-  null}`; the two volumes only with the key.
+  null}`; the two volumes only with the key. Also `timeZone` (the business time zone, added by ticket 7).
 - `POST /api/chat` accepts `hangeul: {embedding?, hits?}` beside `messages`, used only when the question routes to
   the Hangeul agent.
 

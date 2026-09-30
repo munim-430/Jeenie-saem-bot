@@ -36,6 +36,8 @@ Also included:
 - **Honorifics:** replies call you 부장님 by default and 자기야 when the message is personal (tiredness, missing her, good night). Audit, Hangeul, search, vision and smart-home replies always use 부장님. Greetings use 부장님 from 09:00 to 18:00 local time and 자기야 otherwise.
 - **Session greeting:** a new HUD session opens with a short Korean greeting written by the model for your local time of day and how long you were away, with the template greeting (좋은 아침입니다 05–11, 좋은 오후입니다 12–17, 좋은 저녁입니다 18–21, 늦은 시간까지 수고 많으십니다 at night) as the fallback. Telegram `/start` uses the template greeting. Set `JEANNIE_TIMEZONE` (default `Asia/Dhaka`).
 - **Memory:** upload `.md` and `.jsonl` files from the HUD's Memory panel. Pinned notes (like your profile) are always in her prompt; the rest are recalled when a message matches them.
+- **Installable PWA:** add Jeannie to the phone's home screen (standalone, portrait). The service worker caches the app shell and the avatar clips only, never `/api/*`. Offline, a banner says "Offline: Jeannie needs a connection" and the input is disabled: there are no offline answers.
+- **Hangeul data on the device:** with the access key, the HUD keeps a copy of the Hangeul data in IndexedDB (first sync about 60 MB, then the change log every 5 minutes), so structured answers render on the phone at once and search runs there. The HUD's Hangeul Sync panel has "Re-sync everything" and "Delete local copy".
 
 ## Quick start
 
@@ -226,6 +228,26 @@ performance, passport checks, document checks with their OCR text, calendar item
   12 Sep", "any passport alerts today?", "what changed since this morning?"), with `/report` in Telegram, or with the
   HUD's DAILY REPORT button (the latest daily brief).
 
+### The copy on the device (`src/lib/client/hg-local/`)
+
+With the access key, the HUD keeps the whole dataset (records and vectors) in IndexedDB (`jeannie-hg`), for speed
+while online. It is never used offline: offline, Jeannie shows a banner and disables the input.
+
+- **Sync.** The first sync pages through `/api/hangeul/snapshot` (about 20 pages, 60 MB of JSON; on mobile data, or on
+  a phone that cannot tell, it asks first) and resumes where it stopped if it is cut short. Then, on open, on focus
+  and every 5 minutes, it reads the bot's runs (`/api/hangeul/runs`) and the change log (`/api/hangeul/changes`):
+  an upsert replaces a record and its chunks, a delete drops both.
+- **Answers.** A structured question (consultancies done, verifications on a day, a student card...) renders on the
+  device with the same `answer.ts` as the server, dated by the synced runs, when the copy caught up in the last 6
+  minutes and found something. Everything else goes to the server as usual.
+- **Search.** transformers.js runs `Supabase/gte-small` (quantized) in a Web Worker; the question's vector is compared
+  with every local vector (about 10 ms for 15,600 vectors on a PC), and the vector and top records go to the server
+  with the question, which re-reads those records from current rows. On the first sync, three stored chunk texts
+  are embedded on the device: a cosine below 0.98 means a model mismatch, and search stays on the server. Korean
+  and Bangla questions always search on the server (its model rewrites them into English first).
+- **Removing it.** "Delete local copy" in the Hangeul Sync panel is the only way to remove the data from a device;
+  nothing syncs again until "Sync to this device". "Re-sync everything" deletes and downloads it again.
+
 ## API
 
 | Route | Runtime | Description |
@@ -238,9 +260,10 @@ performance, passport checks, document checks with their OCR text, calendar item
 | `GET /api/hangeul` | Node.js | The Hangeul data's state: `{ configured, records, lastRuns, latestBrief, latestReport }` (no student data). |
 | `GET /api/hangeul/snapshot?cursor=` | Node.js | One ~3 MB page of the full dump for a device's first sync: `{ max_seq, records, chunks, next }`, vectors as base64 float32. |
 | `GET /api/hangeul/changes?since=&limit=` | Node.js | The change log after `since`: `{ changes, next_seq, more }`. |
+| `GET /api/hangeul/runs` | Node.js | Hangeul BOT's recent runs `{ runs }` (job, times, status, kinds read; no student data): what dates a device's "as of" lines. |
 | `POST /api/hangeul/ask` | Node.js | `{ question, lang?, embedding?, hits?, prose? }` → a code-built answer with its plan, facts, tables and as-of line. |
 | `POST /api/telegram/webhook` | Node.js | Telegram bot bridge. |
-| `GET /api/status` | Edge | Which capabilities are configured. Never returns secrets. `hangeul.records` and `hangeul.lastRuns` only with the access key. |
+| `GET /api/status` | Edge | Which capabilities are configured, and the business `timeZone`. Never returns secrets. `hangeul.records` and `hangeul.lastRuns` only with the access key. |
 
 Every `/api/hangeul/*` route needs `JEANNIE_ACCESS_KEY` set (403 otherwise) and presented (401), and Supabase
 configured (503).
@@ -251,18 +274,21 @@ configured (503).
 src/
 ├── app/
 │   ├── api/{chat,search,tts,hangeul,status,session,memory}/route.ts
-│   ├── api/hangeul/{snapshot,changes,ask}/route.ts
+│   ├── api/hangeul/{snapshot,changes,runs,ask}/route.ts
 │   ├── api/telegram/webhook/route.ts
-│   ├── layout.tsx · page.tsx · globals.css      # the pink hologram HUD
+│   ├── layout.tsx · page.tsx · globals.css · manifest.ts   # the pink hologram HUD, the PWA manifest
 ├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · MemoryPanel · CameraScanner
-├── hooks/        chat streaming, voice output, speech recognition
+│                 OfflineBanner · HangeulSyncPanel · HangeulSyncNotice
+├── hooks/        chat streaming, voice output, speech recognition, online status, the Hangeul device copy
 └── lib/
     ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent
     │             tts-engine · edge-tts · llm · persona · etiquette · audit-flow
     ├── hangeul/  router · answer (isomorphic, code-built answers) · store (PostgREST) · respond · filter · days · vectors
     ├── memory/   chunk (markdown/JSONL chunking, secret guard, search terms) · store · supabase
-    ├── client/   typed fetch wrappers for the HUD
+    ├── client/   typed fetch wrappers for the HUD, reachability
+    │   └── hg-local/  the Hangeul device copy: db (IndexedDB) · sync · search · check · ask · embed.worker
     └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
+public/sw.js      the service worker (app shell and avatar clips; never /api/*)
 tests/            Vitest suites for agents and routes
 supabase/migrations/  memory tables, search function, audit state, the Hangeul context
 supabase/functions/hg-embed/  question embeddings for Hangeul search (Edge Function)

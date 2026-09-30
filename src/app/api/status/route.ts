@@ -31,6 +31,7 @@ export async function GET(req: Request): Promise<Response> {
     voice: { engines: configuredTtsEngines(env) },
     telegram: { configured: Boolean(env.telegram.botToken) },
     hangeul: { configured: env.hangeul.enabled, records: null, lastRuns: null },
+    timeZone: env.timeZone,
     time: new Date().toISOString(),
   };
   if (env.hangeul.enabled && hasValidAccessKey(req)) {

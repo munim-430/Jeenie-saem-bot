@@ -10,12 +10,17 @@ import type { OrbState } from "@/components/HologramOrb";
 import { HudHeader } from "@/components/HudHeader";
 import { MemoryPanel } from "@/components/MemoryPanel";
 import { isLangMode } from "@/components/LanguageToggle";
+import { HangeulSyncNotice } from "@/components/HangeulSyncNotice";
+import { HangeulSyncPanel } from "@/components/HangeulSyncPanel";
+import { OfflineBanner } from "@/components/OfflineBanner";
 import { ReactorCore } from "@/components/ReactorCore";
 import { TacticalMetrics } from "@/components/TacticalMetrics";
 import { useAvatarDirector } from "@/hooks/useAvatarDirector";
 import { useIdleWatch } from "@/hooks/useIdleWatch";
 import { useJeannieChat } from "@/hooks/useJeannieChat";
+import { useHangeulLocal } from "@/hooks/useHangeulLocal";
 import { useLastSeen } from "@/hooks/useLastSeen";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
@@ -24,9 +29,11 @@ import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
 import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
 import type { LangMode } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, resolveLanguage } from "@/lib/utils";
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+/** Until /api/status names it: the business time zone Hangeul BOT counts its days in. */
+const BUSINESS_TIME_ZONE = "Asia/Dhaka";
 
 export default function JeannieHud() {
   const [lang, setLang] = usePersistentState<LangMode>("jeannie.lang", "auto", isLangMode);
@@ -49,6 +56,18 @@ export default function JeannieHud() {
   const awayMs = useLastSeen();
 
   const system = useSystemStatus();
+  // Offline (spec D10): a banner and a disabled input, never offline answers.
+  const { offline } = useOnlineStatus();
+  const offlineRef = useRef(offline);
+  // The Hangeul data on this device (ticket 7): only where the server serves it (key set and presented).
+  const hangeulServed = Boolean(system.status?.hangeul.configured && system.status.accessKeyRequired) && hasAccessKey;
+  const hgLocal = useHangeulLocal({
+    enabled: hangeulServed,
+    online: !offline,
+    phone: viewMode.isPhone,
+    timeZone: system.status?.timeZone ?? BUSINESS_TIME_ZONE,
+  });
+  const { prepare: prepareLocal } = hgLocal;
   const speech = useSpeechOutput({
     serverVoice: system.status ? system.status.voice.engines.some((engine) => engine !== "browser") : true,
   });
@@ -63,6 +82,7 @@ export default function JeannieHud() {
     voiceOnRef.current = voiceOn;
     attachmentRef.current = attachment;
     speechBusyRef.current = speech.speaking || speech.preparing;
+    offlineRef.current = offline;
   });
 
   // Browser-only facts, read after hydration.
@@ -85,7 +105,21 @@ export default function JeannieHud() {
       if (voiceOnRef.current && !listeningRef.current) speech.speak(reply.text, reply.lang);
     },
     onAccessKeyRequired: (rejected) => setKeyDialog({ open: true, reason: rejected ? "rejected" : "required" }),
+    prepareHangeul: async ({ question, lang: mode, previous }) => {
+      const replyLang = resolveLanguage(mode, question, previous);
+      const prepared = await prepareLocal(question, replyLang);
+      if (!prepared) return null;
+      if (prepared.mode === "local") return { answer: { text: prepared.text, lang: replyLang } };
+      return prepared.hints ? { hints: prepared.hints } : null;
+    },
   });
+
+  // Every send (composer, quick commands, IoT tiles, voice) goes through here: nothing is sent while offline.
+  const { send: chatSend } = chat;
+  const send = useCallback(
+    (text: string, image?: string | null): boolean => (offlineRef.current ? false : chatSend(text, image)),
+    [chatSend],
+  );
 
   // Opening line: a Korean greeting for the operator's time of day. Once per page load,
   // after the status says whether a key is needed (a 401 here would be noise).
@@ -149,8 +183,7 @@ export default function JeannieHud() {
   const recognition = useSpeechRecognition({
     lang: recognitionLang,
     onFinal: (transcript) => {
-      chat.send(transcript, attachmentRef.current?.dataUrl ?? null);
-      setAttachment(null);
+      if (send(transcript, attachmentRef.current?.dataUrl ?? null)) setAttachment(null);
     },
   });
 
@@ -237,7 +270,7 @@ export default function JeannieHud() {
   };
 
   const sendCommand = (command: string) => {
-    chat.send(command);
+    send(command);
   };
 
   const conversationCount = chat.messages.filter((m) => m.role !== "system").length;
@@ -256,6 +289,7 @@ export default function JeannieHud() {
           onSwitchToHud={() => viewMode.setView("hud")}
           voiceLevel={speech.getLevel}
           voiceMeasured={speech.routed}
+          offline={offline}
         />
       ) : (
         // The server renders the HUD (desktop unchanged); phones keep it hidden until the view is known.
@@ -298,7 +332,8 @@ export default function JeannieHud() {
               attachment={attachment}
               onAttach={setAttachment}
               onOpenCamera={() => setCameraOpen(true)}
-              onSend={chat.send}
+              onSend={send}
+              offline={offline}
               onStop={() => {
                 chat.stop();
                 speech.stop();
@@ -333,6 +368,22 @@ export default function JeannieHud() {
                 statusReady={statusLoaded}
                 onNotice={chat.notify}
               />
+              <HangeulSyncPanel
+                local={hgLocal}
+                blocked={
+                  !statusLoaded
+                    ? "Checking the server…"
+                    : !system.status?.hangeul.configured
+                      ? "Not linked: set SUPABASE_URL and SUPABASE_SECRET_KEY."
+                      : !keyNeeded
+                        ? "Locked: set JEANNIE_ACCESS_KEY on the server (the data holds student records)."
+                        : !hasAccessKey
+                          ? "Locked: access key required."
+                          : null
+                }
+                total={system.status?.hangeul.records ?? null}
+                onNotice={chat.notify}
+              />
             </TacticalMetrics>
           </main>
         </div>
@@ -340,6 +391,8 @@ export default function JeannieHud() {
       {viewMode.view === "hud" && viewMode.isPhone ? (
         <AvatarReturnButton onClick={() => viewMode.setView("avatar")} />
       ) : null}
+      <OfflineBanner offline={offline} variant={avatarMode ? "avatar" : "hud"} />
+      {avatarMode && hangeulServed && !offline ? <HangeulSyncNotice local={hgLocal} total={system.status?.hangeul.records ?? null} /> : null}
 
       <CameraScanner
         open={cameraOpen}

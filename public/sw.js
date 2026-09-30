@@ -1,15 +1,19 @@
 // Jeannie service worker: app shell + avatar clip cache. Hand-written, no build step.
 //
-//   /api/*               network only, never cached
+//   /api/*               network only, never cached, never handled (navigations too)
 //   /avatar/*, /icons/*  cache first (clips are immutable per deploy; bump VERSION to refresh)
 //   /_next/static/*      stale-while-revalidate (content-hashed file names)
 //   page navigations     network first, falling back to the cached shell when offline
+//
+// No student data ever enters this cache (spec §6): the Hangeul records live in
+// IndexedDB ("jeannie-hg"), and putInCache refuses any /api/ URL whatever asked.
+// The transformers.js model cache ("transformers-cache") is not ours and is kept.
 //
 // <video> always sends Range requests. Those are answered from a cached full
 // response when there is one (sliced into a 206); otherwise they go to the
 // network untouched and the full clip is fetched in the background for next time.
 
-const VERSION = "v3";
+const VERSION = "v4";
 const CACHE = `jeannie-${VERSION}`;
 const SHELL_URL = "/";
 
@@ -43,12 +47,17 @@ function parseRange(header, size) {
   return { start, end };
 }
 
+/** The API (and so every Hangeul record) is never cached, whatever strategy asked. */
+function isApiPath(url) {
+  return new URL(typeof url === "string" ? url : url.url, self.location.origin).pathname.startsWith("/api/");
+}
+
 function cacheable(response) {
   return response.ok && response.status === 200 && response.type === "basic";
 }
 
 async function putInCache(request, response) {
-  if (!cacheable(response)) return;
+  if (isApiPath(request) || !cacheable(response)) return;
   const cache = await caches.open(CACHE);
   await cache.put(request, response);
 }
@@ -137,6 +146,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
+  if (url.origin === self.location.origin && url.pathname.startsWith("/api/")) return;
   if (request.mode === "navigate" && request.method === "GET" && url.origin === self.location.origin) {
     event.respondWith(networkFirstShell(event));
     return;

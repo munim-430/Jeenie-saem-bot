@@ -7,6 +7,7 @@ import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
+import { OFFLINE_LINE } from "@/lib/client/reachability";
 import { cn } from "@/lib/utils";
 
 // The phone screen: Jeannie full height, her words as subtitles over the lower
@@ -26,6 +27,8 @@ interface AvatarScreenProps {
   /** Her voice's output level (0..1) and whether it is measured from the real audio. */
   voiceLevel: () => number;
   voiceMeasured: boolean;
+  /** No connection (spec D10): hold-to-talk is disabled (the page shows the offline banner). */
+  offline?: boolean;
 }
 
 /** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
@@ -40,6 +43,7 @@ export function AvatarScreen({
   onSwitchToHud,
   voiceLevel,
   voiceMeasured,
+  offline = false,
 }: AvatarScreenProps) {
   const hold = useHoldToTalk(recognition);
   const [lingering, setLingering] = useState(true);
@@ -111,16 +115,19 @@ export function AvatarScreen({
         <button
           type="button"
           className={cn("avatar-fab avatar-fab-lg touch-hold", recognition.listening && "avatar-fab-live")}
-          disabled={!recognition.supported}
+          // A mic already open can still be released.
+          disabled={!recognition.supported || (offline && !recognition.listening)}
           aria-pressed={recognition.listening}
           aria-label={
             !recognition.supported
               ? "Voice input is not supported in this browser"
               : recognition.listening
                 ? "Listening. Release to send"
-                : "Hold to talk to Jeannie"
+                : offline
+                  ? OFFLINE_LINE.en
+                  : "Hold to talk to Jeannie"
           }
-          title={recognition.supported ? "Hold to talk" : "Voice input unavailable"}
+          title={!recognition.supported ? "Voice input unavailable" : offline ? OFFLINE_LINE.en : "Hold to talk"}
           data-hold-to-talk=""
           {...hold}
         >

@@ -1,8 +1,8 @@
 # Spec: Hangeul context in Jeannie (Supabase + offline PWA)
 
 Status: ready-for-human (approved by the owner on 30 Sep 2026; tickets 3-7 are implemented on branch
-saem/hangeul-context-reader: 3, 4 and 5 are done, 6 and 7 are the PWA work in progress; ticket 8 is the owner's live
-check. The tickets are split into [`issues/`](issues/).)
+saem/hangeul-context-reader, not yet merged or deployed; ticket 8 is the owner's live check. The tickets are split
+into [`issues/`](issues/).)
 
 Companion: [`hangeul-bot-prompt.md`](hangeul-bot-prompt.md) is the prompt that makes Hangeul BOT publish
 its data. Both files share **one data contract** (the tables below). A change to one means a change to the other.

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as ask } from "@/app/api/hangeul/ask/route";
 import { GET as changes } from "@/app/api/hangeul/changes/route";
 import { GET as dataStatus } from "@/app/api/hangeul/route";
+import { GET as runsRoute } from "@/app/api/hangeul/runs/route";
 import { GET as snapshot } from "@/app/api/hangeul/snapshot/route";
 import { GET as status } from "@/app/api/status/route";
 import type { SystemStatus } from "@/lib/types";
@@ -40,6 +41,7 @@ const ROUTES: [string, () => Request, (req: Request) => Promise<Response>][] = [
   ["GET /api/hangeul", () => request("/api/hangeul"), dataStatus],
   ["GET /api/hangeul/snapshot", () => request("/api/hangeul/snapshot"), snapshot],
   ["GET /api/hangeul/changes", () => request("/api/hangeul/changes?since=0"), changes],
+  ["GET /api/hangeul/runs", () => request("/api/hangeul/runs"), runsRoute],
   ["POST /api/hangeul/ask", () => askBody({ question: "how many consultancies were closed today?" }), ask],
 ];
 
@@ -104,6 +106,26 @@ describe("GET /api/hangeul", () => {
     const down = await dataStatus(request("/api/hangeul"));
     expect(down.status).toBe(502);
     expect((await down.json()).error).toContain("Hangeul data unreachable (HTTP 500)");
+  });
+});
+
+describe("GET /api/hangeul/runs", () => {
+  it("gives a device the bot's runs (what dates its 'as of' lines), without student data", async () => {
+    stubPostgrest(db());
+    const res = await runsRoute(request("/api/hangeul/runs"));
+    const raw = await res.text();
+    const body = JSON.parse(raw) as { runs: { job: string; finished_at: string; byKind: Record<string, number[]> }[] };
+    expect(body.runs.map((r) => r.job)).toEqual(["portal_sync", "passport_watcher", "full_picture", "full_picture", "backfill"]);
+    expect(body.runs[2].byKind).toHaveProperty("consultant_performance");
+    expect(raw).not.toContain("TEST STUDENT");
+    expect(raw).not.toContain("A00000001");
+  });
+
+  it("502 when Supabase is down", async () => {
+    stubPostgrest(db(), () => new Response("{}", { status: 500 }));
+    const res = await runsRoute(request("/api/hangeul/runs"));
+    expect(res.status).toBe(502);
+    expect((await res.json()).code).toBe("hangeul_unavailable");
   });
 });
 
