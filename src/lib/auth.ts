@@ -44,9 +44,10 @@ export function requireAccess(req: Request): Response | null {
 }
 
 /**
- * Whether a caller may see privileged data (live Hangeul admin data). Only
- * callers that proved a configured secret qualify; an open API (no access key
- * configured) is never trusted.
+ * Whether a caller may see privileged data (memory). Only callers that proved a
+ * configured secret qualify; an open API (no access key configured) is never
+ * trusted. The Hangeul data (full student records) needs more: the access key
+ * itself (`hasValidAccessKey`), never the cron bearer.
  */
 export function isTrustedRequest(req: Request): boolean {
   return hasValidAccessKey(req) || isCronRequest(req);

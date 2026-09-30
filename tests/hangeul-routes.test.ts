@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as chat } from "@/app/api/chat/route";
 import { POST as ask } from "@/app/api/hangeul/ask/route";
 import { GET as changes } from "@/app/api/hangeul/changes/route";
 import { GET as dataStatus } from "@/app/api/hangeul/route";
@@ -229,6 +230,39 @@ describe("POST /api/hangeul/ask", () => {
     const res = await ask(askBody(body));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain(message);
+  });
+});
+
+describe("POST /api/chat and the Hangeul data", () => {
+  const CRON = "cron-secret-value";
+  const chatRequest = (headers: Record<string, string>) =>
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ messages: [{ role: "user", content: "Who is HNG-2026-12?" }], lang: "en" }),
+    });
+
+  it("an open deployment (no access key) gives the cron bearer the key line, and reads no student data", async () => {
+    vi.stubEnv("JEANNIE_ACCESS_KEY", "");
+    vi.stubEnv("CRON_SECRET", CRON);
+    const { calls } = stubPostgrest(db());
+    const res = await chat(chatRequest({ authorization: `Bearer ${CRON}` }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-jeannie-agent")).toBe("hangeul");
+    const text = await res.text();
+    expect(text).toContain("access key");
+    expect(text).not.toContain("TEST STUDENT ONE");
+    expect(text).not.toContain("A00000001");
+    expect(calls.filter((c) => c.path.startsWith("/rest/v1/hg_"))).toEqual([]);
+  });
+
+  it("the access key itself unlocks the student card", async () => {
+    vi.stubEnv("CRON_SECRET", CRON);
+    stubPostgrest(db());
+    const text = await (await chat(chatRequest({ "x-jeannie-key": KEY }))).text();
+    expect(text).toContain("TEST STUDENT ONE (HNG-2026-012, portal uid 101): Documents Verified.");
+    // With the key set, the cron bearer is not even let in.
+    expect((await chat(chatRequest({ authorization: `Bearer ${CRON}` }))).status).toBe(401);
   });
 });
 

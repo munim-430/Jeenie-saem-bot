@@ -177,7 +177,7 @@ Every variable is optional. Values left as the `your_…` placeholders from `.en
 | `EDGE_TTS_ENABLED`, `EDGE_TTS_VOICE_EN`, `EDGE_TTS_VOICE_KO`, `EDGE_TTS_VOICE_MIXED` | Free Microsoft neural voices, used when ElevenLabs is off or fails. The mixed voice reads English sentences that contain Korean words. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Telegram bridge. The webhook secret is required, and only the admin chat gets answers. |
 | `MOCK_MODE` | `true`: the session greeting uses its template instead of the model. |
-| `CRON_SECRET` | Optional: a caller with `Authorization: Bearer $CRON_SECRET` is trusted (for a cron you add; none is scheduled). |
+| `CRON_SECRET` | Optional: a caller with `Authorization: Bearer $CRON_SECRET` is trusted for memory (for a cron you add; none is scheduled). It never unlocks the Hangeul data, which needs `JEANNIE_ACCESS_KEY` itself. |
 
 > **About the voice:** set `ELEVENLABS_VOICE_ID` to a voice you own or are licensed to use, such as
 > one from the ElevenLabs Voice Library or your own recording. Cloning a real person's voice without

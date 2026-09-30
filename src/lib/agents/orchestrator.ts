@@ -354,8 +354,14 @@ export interface OrchestratorInput {
 }
 
 export interface OrchestratorContext {
-  /** Caller proved a configured secret; unlocks the Hangeul data (full student records) and memory. */
+  /** Caller proved a configured secret; unlocks memory, and the Hangeul data unless `hangeulAccess` says otherwise. */
   trusted: boolean;
+  /**
+   * Caller may read the Hangeul data (full student records): the HUD presenting the configured
+   * JEANNIE_ACCESS_KEY, or the Telegram admin chat. Defaults to `trusted`. The chat route sets it from the
+   * access key alone, so the cron bearer never unlocks student data (spec D8: the one access key).
+   */
+  hangeulAccess?: boolean;
   /** Hangeul data readers override (tests, the device copy); defaults to the Supabase store. */
   hangeul?: HangeulReaders;
   /** What the PWA computed for a Hangeul question: its vector and/or its own search hits. */
@@ -421,7 +427,7 @@ function fixed(
  * must pass the number check first, so the reply is sent whole, not streamed.
  */
 async function runHangeul(turn: Turn): Promise<OrchestratorResult> {
-  if (!turn.ctx.trusted) return fixed("hangeul", turn.lang, turn.honorific, hangeulNeedsKeyLine(turn.lang));
+  if (!(turn.ctx.hangeulAccess ?? turn.ctx.trusted)) return fixed("hangeul", turn.lang, turn.honorific, hangeulNeedsKeyLine(turn.lang));
   const readers = turn.ctx.hangeul ?? (hangeulConfigured() ? createHangeulStore({ signal: turn.ctx.signal }) : null);
   if (!readers) return fixed("hangeul", turn.lang, turn.honorific, hangeulNotConfiguredLine(turn.lang));
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { runOrchestrator } from "@/lib/agents/orchestrator";
-import { isTrustedRequest, requireAccess } from "@/lib/auth";
+import { hasValidAccessKey, isTrustedRequest, requireAccess } from "@/lib/auth";
 import { EMBEDDING_DIMENSIONS, readEmbedding } from "@/lib/hangeul/vectors";
 import { CHAT_HEADERS } from "@/lib/types";
 import { dataUrlByteLength, encodeHeaderJson, errorResponse, isImageDataUrl } from "@/lib/utils";
@@ -77,6 +77,8 @@ export async function POST(req: Request): Promise<Response> {
       { messages, image: image ?? null, lang },
       {
         trusted: isTrustedRequest(req),
+        // Student records need the access key itself (like every /api/hangeul route): never the cron bearer.
+        hangeulAccess: hasValidAccessKey(req),
         signal: req.signal,
         hangeulDevice: hangeul
           ? { embedding: hangeul.embedding !== undefined ? readEmbedding(hangeul.embedding) : null, hits: hangeul.hits ?? null }
