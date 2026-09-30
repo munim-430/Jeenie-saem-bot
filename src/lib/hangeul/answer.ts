@@ -219,9 +219,60 @@ class Run {
     return run.finished_at !== null && (run.status === "ok" || run.status === "partial");
   }
 
-  /** The newest finished run that read `kind`. */
+  private reads(run: HgRun, kind: string): boolean {
+    return this.usable(run) && Object.prototype.hasOwnProperty.call(run.byKind, kind);
+  }
+
+  /**
+   * The newest finished run that dates `kind` as a whole. A `command` run does
+   * not: a Telegram command publishes one scope (one day of /inquiries_*, one
+   * period of /performance_*), so its time says nothing about the rest of the kind.
+   */
   runFor(kind: string): HgRun | null {
-    return this.runList.find((r) => this.usable(r) && Object.prototype.hasOwnProperty.call(r.byKind, kind)) ?? null;
+    return this.runList.find((r) => r.job !== "command" && this.reads(r, kind)) ?? null;
+  }
+
+  /** Any finished run, commands included, that read `kind`: proof the kind is published at all. */
+  private readBy(kind: string): HgRun | null {
+    return this.runList.find((r) => this.reads(r, kind)) ?? null;
+  }
+
+  /**
+   * The newest run that re-read day `day` of a day-scoped kind (consultation,
+   * consultation_day): the full picture reads yesterday and today, the brief
+   * and a command their own day, the backfill every day up to its own.
+   */
+  runForDay(kind: string, day: string): HgRun | null {
+    return (
+      this.runList.find((r) => {
+        if (!this.reads(r, kind)) return false;
+        const ranOn = dayOf(r.started_at || r.finished_at, this.options.timeZone);
+        if (!ranOn) return false;
+        switch (r.job) {
+          case "full_picture":
+            return ranOn === day || ranOn === addDays(day, 1);
+          case "daily_brief":
+          case "command":
+            return ranOn === day;
+          case "backfill":
+            return ranOn >= day;
+          default:
+            return false;
+        }
+      }) ?? null
+    );
+  }
+
+  /**
+   * "As of" for day `day` of a day-scoped kind: the newest run that re-read that
+   * day, or the rows' own read_at when that is newer (a read that changed them),
+   * or null when nothing dates it.
+   */
+  datedDay(kind: string, day: string, rows: readonly HgRecord[]): AsOf | null {
+    const run = this.runForDay(kind, day);
+    const read = rows.reduce<string | null>((best, r) => (r.read_at && (!best || Date.parse(r.read_at) > Date.parse(best)) ? r.read_at : best), null);
+    if (run?.finished_at && (!read || Date.parse(run.finished_at) >= Date.parse(read))) return { at: run.finished_at, job: run.job, source: "run" };
+    return read ? { at: read, job: null, source: "read_at" } : null;
   }
 
   /** The last run on business day `day` that read `kind` (when a past day's window was last confirmed). */
@@ -242,7 +293,13 @@ class Run {
 
   /** Whether the bot has ever read this kind successfully (only then can "none" be said). */
   published(kind: string): boolean {
-    return this.runFor(kind) !== null || (this.readTimes.get(kind)?.length ?? 0) > 0;
+    return this.readBy(kind) !== null || (this.readTimes.get(kind)?.length ?? 0) > 0;
+  }
+
+  /** Leaves `kind` out of the "as of" line (it was looked up, but nothing of it is shown). */
+  undate(kind: string): void {
+    this.readTimes.delete(kind);
+    this.overrides.delete(kind);
   }
 
   async read(kind: HgKind, filter?: RecordFilter): Promise<HgRecord[]> {
@@ -532,6 +589,11 @@ async function requestsOnDay(run: Run, day: string, status?: string, detailed = 
   }
   if (dayRecord) run.cite([dayRecord]);
   run.cite(rows);
+  // Dated by the last read of THIS day, not by the newest run of the kind (the full picture re-reads only yesterday and today).
+  for (const kind of ["consultation", "consultation_day"] as const) {
+    const dated = run.datedDay(kind, day, dayRecord ? [...rows, dayRecord] : rows);
+    if (dated) run.overrides.set(kind, dated);
+  }
   const picked = status ? rows.filter((r) => str(r.data.status) === status) : rows;
   const counts = countBy(rows, (r) => str(r.data.status));
   const breakdown = counts.map(([s, n]) => `${s || "no status"} ${n}`).join(", ");
@@ -583,19 +645,24 @@ async function inquiriesOnDay(run: Run, plan: Extract<Plan, { intent: "inquiries
     await requestsOnDay(run, plan.day, plan.status, true);
     return;
   }
-  const days = await run.read("consultation_day", { from: plan.day, to: plan.to });
-  const rows = await run.read("consultation", { from: plan.day, to: plan.to });
-  const span = run.span(plan.day, plan.to);
+  await requestsInRange(run, plan.day, plan.to, plan.status);
+}
+
+/** Requests received over a range of days, by day and by current status. False when no day of it has been read. */
+async function requestsInRange(run: Run, from: string, to: string, status?: string, place: "headline" | "notes" = "headline"): Promise<boolean> {
+  const days = await run.read("consultation_day", { from, to });
+  const rows = await run.read("consultation", { from, to });
+  const span = run.span(from, to);
   if (days.length === 0 && rows.length === 0) {
-    run.notAvailable(bi(`Requests received ${span.en}`, `${span.ko} 접수된 상담 신청`));
-    return;
+    run.notAvailable(bi(`Requests received ${span.en}`, `${span.ko} 접수된 상담 신청`), place);
+    return false;
   }
   run.cite(days);
-  const picked = plan.status ? rows.filter((r) => str(r.data.status) === plan.status) : rows;
+  const picked = status ? rows.filter((r) => str(r.data.status) === status) : rows;
   run.headline.push(
     bi(
-      `Requests received ${span.en}${plan.status ? ` now marked ${plan.status}` : ""}: ${fmtInt(picked.length)}.`,
-      `${span.ko} 접수된 상담 신청${plan.status ? ` 중 현재 '${statusLabel(plan.status, "ko")}'` : ""}: ${fmtInt(picked.length)}건.`,
+      `Requests received ${span.en}${status ? ` now marked ${status}` : ""}: ${fmtInt(picked.length)}.`,
+      `${span.ko} 접수된 상담 신청${status ? ` 중 현재 '${statusLabel(status, "ko")}'` : ""}: ${fmtInt(picked.length)}건.`,
     ),
   );
   const perDay = countBy(picked, (r) => r.day ?? "").sort((a, b) => (a[0] < b[0] ? -1 : 1));
@@ -604,11 +671,22 @@ async function inquiriesOnDay(run: Run, plan: Extract<Plan, { intent: "inquiries
   run.table(bi("By status now", "현재 상태별"), [bi("Status", "상태"), bi("Requests", "건수")], byStatus.map(([s, n]) => [s || "(no status)", String(n)]));
   const read = new Set(days.map((d) => d.key));
   const unread: string[] = [];
-  for (let d = plan.day; d <= plan.to && unread.length < 40; d = addDays(d, 1)) if (!read.has(d) && d <= run.today) unread.push(d);
+  for (let d = from; d <= to && unread.length < 40; d = addDays(d, 1)) if (!read.has(d) && d <= run.today) unread.push(d);
   if (unread.length && days.length) {
     const list = unread.map((d) => shortDay(d, run.thisYear)).join(", ");
     run.notes.push(bi(`Days not read yet: ${list}.`, `아직 읽지 않은 날짜: ${list}.`));
   }
+  // The range is only as fresh as its least recently read day.
+  const readDays = new Set([...days.map((d) => d.key), ...rows.map((r) => r.day ?? "")].filter(Boolean));
+  for (const kind of ["consultation", "consultation_day"] as const) {
+    let oldest: AsOf | null = null;
+    for (const d of readDays) {
+      const dated = run.datedDay(kind, d, [...rows.filter((r) => r.day === d), ...days.filter((x) => x.key === d)]);
+      if (dated && (!oldest || Date.parse(dated.at) < Date.parse(oldest.at))) oldest = dated;
+    }
+    if (oldest) run.overrides.set(kind, oldest);
+  }
+  return true;
 }
 
 interface Window {
@@ -688,7 +766,59 @@ function dateWindow(run: Run, window: Window, period: "today" | "month"): void {
   );
 }
 
+/**
+ * A range of days (this week, the last 7 days). The portal's Consultant
+ * Performance page shows only Today and This Month, so there is no figure for
+ * the range: say so, and show each day's own Today window that is on file in it.
+ */
+async function performanceRange(run: Run, from: string, to: string, what: "consultancies" | "leaderboard"): Promise<void> {
+  const span = run.span(from, to);
+  run.headline.push(
+    what === "consultancies"
+      ? bi(
+          `Consultancies done ${span.en}: not on the portal. Its Consultant Performance page shows only today and this month.`,
+          `${span.ko} 상담 완료: 포털에 없는 수치예요. 상담사 실적 페이지는 오늘과 이번 달만 보여 줘요.`,
+        )
+      : bi(
+          `Consultant performance ${span.en}: not on the portal. Its Consultant Performance page shows only today and this month.`,
+          `${span.ko} 상담사 실적: 포털에 없는 수치예요. 상담사 실적 페이지는 오늘과 이번 달만 보여 줘요.`,
+        ),
+  );
+  const summaries = (await run.read("consultant_performance", { dataEq: { period: "today" }, keySuffix: "|summary", from, to }))
+    .filter((r) => {
+      const first = str(r.data.first_day);
+      return first >= from && first <= to && (str(r.data.last_day) || first) === first;
+    })
+    .sort((a, b) => str(a.data.first_day).localeCompare(str(b.data.first_day)));
+  if (summaries.length === 0) {
+    run.notes.push(bi(`No day of ${span.en} is on file.`, `${span.ko} 중 저장된 날짜가 없어요.`));
+  } else {
+    run.cite(summaries);
+    const cell = (r: HgRecord, label: string) => tiles(r).find((t) => t.label === label)?.value ?? "";
+    run.table(
+      bi("Each day's Today window on file (as last read that day)", "날짜별 '오늘' 수치 (그날 마지막으로 읽은 값)"),
+      [bi("Day", "날짜"), bi("Consultancies done", "상담 완료"), bi("Files opened", "파일 오픈"), bi("Conversion (file open)", "전환율(파일 오픈)"), bi("Docs ready", "서류 준비 완료")],
+      summaries.map((r) => [shortDay(str(r.data.first_day), run.thisYear), cell(r, "Consultancies done"), cell(r, "Files opened"), cell(r, "Conversion (file open)"), cell(r, "Docs ready")]),
+    );
+    // Each day's figures are as fresh as that day's last read; the oldest dates the table.
+    let oldest: AsOf | null = null;
+    for (const r of summaries) {
+      const day = str(r.data.first_day);
+      const confirmed = day === run.today ? run.runFor("consultant_performance") : run.runOnDay("consultant_performance", day);
+      const dated: AsOf = confirmed?.finished_at ? { at: confirmed.finished_at, job: confirmed.job, source: "run" } : { at: r.read_at, job: null, source: "read_at" };
+      if (!oldest || Date.parse(dated.at) < Date.parse(oldest.at)) oldest = dated;
+    }
+    if (oldest) run.overrides.set("consultant_performance", oldest);
+  }
+  run.notes.push(bi("Ask for this month for the portal's month figures.", "이번 달 수치는 '이번 달'로 물어봐 주세요."));
+}
+
 async function consultanciesDone(run: Run, plan: Extract<Plan, { intent: "consultancies_closed_today" }>): Promise<void> {
+  if (plan.to && plan.to !== plan.day) {
+    await performanceRange(run, plan.day, plan.to, "consultancies");
+    await requestsInRange(run, plan.day, plan.to, undefined, "notes");
+    return;
+  }
   const label = run.day(plan.day);
   const window = await performanceWindow(run, "today", plan.day);
   if (!window) {
@@ -696,6 +826,8 @@ async function consultanciesDone(run: Run, plan: Extract<Plan, { intent: "consul
   } else {
     dateWindow(run, window, "today");
     const done = tiles(window.summary).find((t) => t.label === "Consultancies done")?.value ?? "";
+    // A tile the portal left blank is "not given on the portal", in the reply's own language.
+    const doneKo = !done || done === NOT_GIVEN.en ? NOT_GIVEN.ko : done;
     const rows = [...window.rows].sort(
       (a, b) => (num(b.data.consultancies) ?? -1) - (num(a.data.consultancies) ?? -1) || (num(a.data.rank) ?? 99) - (num(b.data.rank) ?? 99),
     );
@@ -706,7 +838,7 @@ async function consultanciesDone(run: Run, plan: Extract<Plan, { intent: "consul
     run.headline.push(
       bi(
         `Consultancies done ${label.en}: ${done || NOT_GIVEN.en}${perConsultant ? ` — ${perConsultant}` : ""}.`,
-        `${label.ko} 상담 완료: ${done || NOT_GIVEN.ko}${perConsultant ? ` — ${perConsultant}` : ""}.`,
+        `${label.ko} 상담 완료: ${doneKo}${perConsultant ? ` — ${perConsultant}` : ""}.`,
       ),
     );
     tileFacts(run, window.summary);
@@ -738,6 +870,10 @@ async function consultanciesDone(run: Run, plan: Extract<Plan, { intent: "consul
 }
 
 async function performance(run: Run, plan: Extract<Plan, { intent: "performance" }>): Promise<void> {
+  if (plan.period === "today" && plan.to && plan.to !== plan.day) {
+    await performanceRange(run, plan.day, plan.to, "leaderboard");
+    return;
+  }
   const what =
     plan.period === "month"
       ? bi(`Consultant performance, ${monthName(plan.day)}`, `${Number(plan.day.slice(5, 7))}월 상담사 실적`)
@@ -917,8 +1053,9 @@ async function docVerdicts(run: Run, plan: Extract<Plan, { intent: "doc_verdicts
   }
 }
 
+/** Student records for the uids shown in a table (the caller passes only the rows it shows). */
 async function namesByUid(run: Run, uids: readonly number[]): Promise<Map<number, HgRecord>> {
-  const keys = [...new Set(uids.map(String))].slice(0, 60);
+  const keys = [...new Set(uids.map(String))];
   const out = new Map<number, HgRecord>();
   if (keys.length === 0) return out;
   for (const r of await run.read("student", { keys })) if (r.student_uid !== null) out.set(r.student_uid, r);
@@ -936,6 +1073,10 @@ async function passportAlerts(run: Run, plan: Extract<Plan, { intent: "passport_
   } else if (plan.day) {
     rows = await run.read("passport_alert", { day: plan.day });
     scope = bi(`checked ${run.day(plan.day).en}`, `${run.day(plan.day).ko} 확인된`);
+  } else if (plan.from && plan.to) {
+    rows = await run.read("passport_alert", { from: plan.from, to: plan.to });
+    const span = run.span(plan.from, plan.to);
+    scope = bi(`checked ${span.en}`, `${span.ko} 확인된`);
   } else {
     rows = await run.read("passport_alert");
     scope = bi("on file", "전체");
@@ -958,8 +1099,10 @@ async function passportAlerts(run: Run, plan: Extract<Plan, { intent: "passport_
   const listed = (plan.day || plan.student ? rows : problems).filter((r) => str(r.data.status) !== "MATCH" || plan.student);
   if (listed.length) {
     run.cite(listed);
-    const names = await namesByUid(run, listed.map((r) => r.student_uid).filter((u): u is number => u !== null));
+    // Newest scans first; names are looked up for the rows the table shows (the newest matter most).
     const ordered = [...listed].sort((a, b) => str(b.data.checked).localeCompare(str(a.data.checked)));
+    const shown = ordered.slice(0, MAX_TABLE_ROWS);
+    const names = await namesByUid(run, shown.map((r) => r.student_uid).filter((u): u is number => u !== null));
     run.table(
       bi("Scans needing attention", "확인이 필요한 스캔"),
       [bi("Student", "학생"), bi("Status", "상태"), bi("Checked", "확인"), bi("Alert sent", "알림")],
@@ -1037,6 +1180,7 @@ async function missingForStudent(run: Run, plan: Extract<Plan, { intent: "missin
   const name = s.student_name ?? s.key;
   const [report] = await run.read("report", { scope: "missing_report", order: "day.desc", limit: 1 });
   if (!report) {
+    run.undate("report");
     run.notAvailable(bi("The missing-information report", "누락 정보 보고서"));
   } else {
     run.cite([report]);
@@ -1222,6 +1366,8 @@ async function report(run: Run, plan: Extract<Plan, { intent: "report" }>): Prom
   const found = await run.read("report", plan.day ? { ...filter, day: plan.day } : { ...filter, order: "day.desc", limit: plan.report === "stage" ? 50 : 1 });
   const latest = found.reduce<HgRecord | null>((best, r) => (!best || (r.day ?? "") > (best.day ?? "") || ((r.day ?? "") === (best.day ?? "") && r.read_at > best.read_at) ? r : best), null);
   if (!latest) {
+    // No such report to date: the "as of" line names only what is shown (another report's run never dates this one).
+    run.undate("report");
     run.notAvailable(plan.day ? bi(`${title.en} of ${shortDay(plan.day, run.thisYear)}`, `${koDay(plan.day, run.thisYear)} ${title.ko}`) : title);
     if (plan.report === "brief") {
       run.headline.push(bi("Hangeul BOT sends its brief at 18:05.", "Hangeul BOT은 18:05에 브리핑을 보내요."));
@@ -1557,14 +1703,49 @@ export function factsForModel(result: AnswerResult, options: RenderOptions): Rec
 
 // ─── The prose number check (the pack's claims_problem rule, simplest form) ─
 
-const NUMBER = /\d+(?:[.,]\d+)*/g;
+// Numbers are compared as whole tokens of their kind. A clock time ("02:35", the
+// as-of line's) only allows the same time, never its hours or minutes as counts;
+// a date ("1 Oct", "2026-09-30", "10월 1일") only the same date; an id
+// ("HNG-2026-012", "A00000001") only the same id. Everything else is a count.
+const MONTHS_RE = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const NUMBER_TOKEN = new RegExp(
+  [
+    // An id: letters then digits ("A00000001"), or letters-digits-digits ("HNG-2026-012").
+    "(?<id>\\b[A-Za-z]{1,5}(?:-\\d+)+\\b|\\b[A-Za-z]{1,3}\\d{4,}\\b)",
+    "(?<iso>\\b(?<iy>\\d{4})-(?<im>\\d{2})-(?<id2>\\d{2})\\b)",
+    `(?<dm>\\b(?<dmd>\\d{1,2})(?:st|nd|rd|th)?(?: of)?[ -](?<dmm>${MONTHS_RE})\\.?(?![a-z])(?:,? \\d{4}\\b)?)`,
+    `(?<md>\\b(?<mdm>${MONTHS_RE})\\.? (?<mdd>\\d{1,2})(?:st|nd|rd|th)?(?!\\d)(?:,? \\d{4}\\b)?)`,
+    "(?<ko>(?<kom>\\d{1,2}) ?월 ?(?<kod>\\d{1,2}) ?일)",
+    "(?<time>\\b(?<th>[01]?\\d|2[0-3]):(?<tm>[0-5]\\d)(?: ?(?<ap>[ap])\\.?m\\b\\.?)?)",
+    "(?<num>\\d+(?:[.,]\\d+)*)",
+  ].join("|"),
+  "gi",
+);
 
-function canonicalNumbers(text: string): string[] {
+const MONTH_NUM: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Every number in `text` as a typed token: "t:02:35", "d:10-01", "id:HNG-2026-012", "n:20". */
+function numberTokens(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(NUMBER)) {
-    const plain = m[0].replace(/,/g, "");
-    const n = Number(plain);
-    out.push(Number.isFinite(n) ? String(n) : plain);
+  for (const m of text.matchAll(NUMBER_TOKEN)) {
+    const g = m.groups ?? {};
+    if (g.id) out.push(`id:${g.id.toUpperCase()}`);
+    else if (g.iso) out.push(`d:${g.im}-${g.id2}`);
+    else if (g.dm) out.push(`d:${pad(MONTH_NUM[g.dmm.slice(0, 3).toLowerCase()])}-${pad(Number(g.dmd))}`);
+    else if (g.md) out.push(`d:${pad(MONTH_NUM[g.mdm.slice(0, 3).toLowerCase()])}-${pad(Number(g.mdd))}`);
+    else if (g.ko) out.push(`d:${pad(Number(g.kom))}-${pad(Number(g.kod))}`);
+    else if (g.time) {
+      let hour = Number(g.th);
+      const ap = g.ap?.toLowerCase();
+      if (ap === "p" && hour < 12) hour += 12;
+      if (ap === "a" && hour === 12) hour = 0;
+      out.push(`t:${pad(hour)}:${g.tm}`);
+    } else if (g.num) {
+      const plain = g.num.replace(/,/g, "");
+      const n = Number(plain);
+      out.push(`n:${Number.isFinite(n) ? String(n) : plain}`);
+    }
   }
   return out;
 }
@@ -1576,22 +1757,24 @@ function sentencesOf(prose: string): string[] {
     .filter(Boolean);
 }
 
-/** True when every number in `prose` appears in `factsText`. */
+/** True when every number in `prose` appears in `factsText` as the same kind of token (count, time, date, id). */
 export function proseNumbersOk(prose: string, factsText: string): boolean {
-  const allowed = new Set(canonicalNumbers(factsText));
-  return canonicalNumbers(prose).every((n) => allowed.has(n));
+  const allowed = new Set(numberTokens(factsText));
+  return numberTokens(prose).every((n) => allowed.has(n));
 }
 
 /**
  * Keeps the prose sentences whose every number appears in the facts (at most
- * two sentences); a sentence with any other number is dropped.
+ * two sentences); a sentence with any other number is dropped. A time or a
+ * date in the facts (the as-of line's 02:35, "1 Oct") never lets a bare count
+ * through: "35 consultancies" needs a 35 among the figures.
  */
 export function checkProse(prose: string, factsText: string, maxSentences = 2): { text: string; dropped: string[] } {
-  const allowed = new Set(canonicalNumbers(factsText));
+  const allowed = new Set(numberTokens(factsText));
   const kept: string[] = [];
   const dropped: string[] = [];
   for (const sentence of sentencesOf(prose)) {
-    if (canonicalNumbers(sentence).every((n) => allowed.has(n))) kept.push(sentence);
+    if (numberTokens(sentence).every((n) => allowed.has(n))) kept.push(sentence);
     else dropped.push(sentence);
   }
   return { text: kept.slice(0, maxSentences).join(" "), dropped };

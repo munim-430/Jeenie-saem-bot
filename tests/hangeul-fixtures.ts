@@ -59,24 +59,33 @@ function performanceWindow(period: "today" | "month", first: string, last: strin
   ];
 }
 
-function consultations(day: string, statuses: string[]): HgRecord[] {
+const DAY_LABEL: Record<string, string> = { "2026-09-29": "29 Sep 2026", "2026-09-30": "30 Sep 2026" };
+
+/** One day's consultation requests, keys from `base` (portal ids are unique across days). */
+function consultations(day: string, statuses: string[], base = 900, fields: Partial<HgRecord> = {}): HgRecord[] {
+  // 30 Sep's requesters are TEST REQUESTER 1-10; another day's are named by their id.
+  const who = (i: number) => `TEST REQUESTER ${base === 900 ? i + 1 : base + i}`;
   return statuses.map((status, i) =>
-    rec("consultation", `${900 + i}`, {
+    rec("consultation", `${base + i}`, {
       scope: day,
       day,
-      student_name: `TEST REQUESTER ${i + 1}`,
+      student_name: who(i),
       data: {
-        id: `${900 + i}`,
-        name: `TEST REQUESTER ${i + 1}`,
+        id: `${base + i}`,
+        name: who(i),
         status,
         consultant: "TEST CONSULTANT A",
         handled_by: "TEST CONSULTANT B",
-        received: `30 Sep 2026 1${i}:00`,
-        received_date: "30 Sep 2026",
+        received: `${DAY_LABEL[day]} 1${i}:00`,
+        received_date: DAY_LABEL[day],
       },
+      ...fields,
     }),
   );
 }
+
+/** 29 Sep, the day before NOW: 4 requests, read by the 29 Sep 23:35 full picture. */
+export const YESTERDAY_REQUESTS = { day: "2026-09-29", statuses: ["Consulted", "No Answer", "Consulted", "File Opened"], read_at: "2026-09-29T15:00:00+00:00" };
 
 export const STUDENT_ONE = rec("student", "101", {
   student_uid: 101,
@@ -110,6 +119,12 @@ export function records(): HgRecord[] {
     rec("consultation_day", "2026-09-30", {
       day: "2026-09-30",
       data: { day: "2026-09-30", counts: { All: 10, New: 4, Consulted: 6, "No Answer": 0, "File Opened": 0, "Wrong Number": 0 }, listed: 10, complete: true },
+    }),
+    ...consultations(YESTERDAY_REQUESTS.day, YESTERDAY_REQUESTS.statuses, 800, { read_at: YESTERDAY_REQUESTS.read_at }),
+    rec("consultation_day", YESTERDAY_REQUESTS.day, {
+      day: YESTERDAY_REQUESTS.day,
+      read_at: YESTERDAY_REQUESTS.read_at,
+      data: { day: YESTERDAY_REQUESTS.day, counts: { All: 4, New: 0, Consulted: 2, "No Answer": 1, "File Opened": 1, "Wrong Number": 0 }, listed: 4, complete: true },
     }),
     ...[
       ["201", "TEST STUDENT FOUR", "HNG-2026-020", "12,000.00 BDT", "TEST STAFF X", "12 Sep, 10:05"],

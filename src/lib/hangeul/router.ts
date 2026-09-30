@@ -157,7 +157,15 @@ const NOT_A_NAME = new Set(
     "friend mom mother dad father wife husband son daughter brother sister boss world people children men women someone " +
     "somebody everyone anyone nobody it one user customer client company country city state nation school university " +
     "college bank government team agency office hangeul portal consultant consultants bot jeannie tomorrow last next " +
-    "week month year"
+    "week month year " +
+    // "Student visa requirements", "student life in Seoul", "student loans": what students have, not a student's name.
+    "visa visas requirement requirements rule rules policy policies life lives loan loans debt union unions discount " +
+    "discounts deal deals offer offers accommodation accommodations housing dorm dorms dormitory dormitories hostel " +
+    "hostels residence residences card cards id ids account accounts fee fees tuition cost costs prices budget " +
+    "scholarship scholarships aid finance insurance health job jobs work permit permits exchange exchanges " +
+    "travel ticket tickets pass passes railcard transport council club clubs society societies association center " +
+    "centre services service support counselling counseling ambassador ambassadors experience experiences culture " +
+    "rankings population numbers statistics"
   ).split(" "),
 );
 
@@ -171,6 +179,22 @@ function cleanName(raw: string): string | null {
   if (name.length === 0 || name.some((w) => NOT_A_NAME.has(w.toLowerCase()))) return null;
   const joined = name.join(" ").replace(/[.-]+$/, "");
   return joined.replace(/[^a-z]/gi, "").length >= 3 ? joined : null;
+}
+
+/**
+ * A capitalised run after "Student" is a name only when it is shaped like one:
+ * in capitals as the portal writes names ("student RAHIM UDDIN"), or Title Case
+ * that does not go on to a place ("What are the Student Visa Requirements for
+ * Korea?", "the Student Union at Seoul National" are things, not people).
+ */
+function capsName(t: string): string | null {
+  const m = STUDENT_CAPS.exec(t);
+  if (!m) return null;
+  const words = m[1].split(" ");
+  const shouting = words.every((w) => w.replace(/[^A-Za-z]/g, "") === w.replace(/[^A-Za-z]/g, "").toUpperCase());
+  const after = t.slice(m.index + m[0].length);
+  if (!shouting && words.length > 1 && /^ (?:for|at|in|of|on|from|near|to) /i.test(after)) return null;
+  return cleanName(m[1]);
 }
 
 /** HNG-2026-12 → HNG-2026-012 (the portal zero-pads to three digits). */
@@ -187,12 +211,43 @@ export function studentFrom(t: string): StudentQuery | null {
   const passport = PASSPORT_NO.exec(t);
   if (passport && PASSPORT_CONTEXT.test(t)) return { passport: passport[1].toUpperCase() };
   for (const re of [STUDENT_NAMED, STUDENT_CALLED, STUDENT_CAPS, POSSESSIVE, KO_STUDENT]) {
-    const m = re.exec(t);
-    const name = m ? cleanName(m[1]) : null;
+    let name: string | null;
+    if (re === STUDENT_CAPS) name = capsName(t);
+    else {
+      const m = re.exec(t);
+      name = m ? cleanName(m[1]) : null;
+    }
     if (name) return { name };
   }
   return null;
 }
+
+/**
+ * The performance words, with the owner's own spellings that Hangeul BOT
+ * accepts too (ask._PERFORMANCE_WORDS: "performence", "perfomance",
+ * "performances"). "Outperform" and "performing arts" are not among them.
+ */
+const PERF = "(?:perform[ae]nces?|perfom[ae]nces?|performaces?|perfromances?|preformances?)";
+/** A time phrase that may close a short performance question ("how did the team do today?"). */
+const PERF_WHEN = "(?: (?:today|yesterday|this (?:week|month)|last (?:week|month)|so far))?[?.!]*$";
+/** Someone else's performance: a machine, a market, a show, an employee's review. Out unless the agency is named. */
+const PERF_OTHER = new RegExp(
+  `\\b(?:markets?|portfolio|funds?|index|indices|nasdaq|s&p|dow|nifty|sensex|servers?|websites?|site|apps?|laptops?|computers?|pc|gpu|cpu|phones?|cars?|engines?|battery|database|queries|code|network|wifi|internet|movies?|films?|actors?|actress|bands?|concerts?|singers?|songs?|albums?|athletes?|economy|gdp|compan(?:y|ies)|employees?|students?)\\b|\\b${PERF} (?:reviews?|appraisals?|evaluations?|bonus(?:es)?|tips|issues?|problems?|improvements?|tuning|tests?|testing|anxiety)\\b`,
+  "i",
+);
+/**
+ * A count of consultancies is the agency's, not a fee, a doctor's, or how many
+ * consultancy firms a city has ("total consultancy fees", "how many consultations
+ * did the doctor do today", "how many consultancies are there in Bangladesh?").
+ */
+const CONSULT_MONEY = /\b(?:fees?|costs?|prices?|pricing|charges?|rates?|salar(?:y|ies)|earn(?:ed|ings)?|revenue|budget)\b/i;
+const MONTH_NAMES = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const CONSULT_ELSEWHERE = new RegExp(
+  `\\b(?:are there|is there|exist|near me|firms?|compan(?:y|ies)|agencies|businesses|doctors?|physicians?|lawyers?|dentists?|therapists?|clinics?|hospitals?|patients?|nurses?|vets?)\\b|\\bin (?!(?:the|our|this|last|total|all|a|an|today|yesterday|${MONTH_NAMES})\\b)[a-z]{3,}`,
+  "i",
+);
+/** The agency itself, named: keeps a consultancy count ours despite CONSULT_ELSEWHERE ("how many consultancies did we do in Dhaka today?"). */
+const CONSULT_OURS = /\b(?:hangeul|portal|HNG|our|we|us|the bot|consultants?|counsell?ors?|staff|team)\b|한글|포털/i;
 
 const DOC_WORDS =
   /\b(?:doc(?:ument)?s?|verdicts?|bank (?:statement|solvency)|birth certificate|nid|affidavit|transcripts?|certificates?|photo|ocr|page|statement|says?|mentions?|written|balance)\b|서류|문서|통장|잔고|증명서/i;
@@ -218,9 +273,19 @@ const CUES = {
     /상담.{0,12}(?:완료|끝|마감|종료|몇 ?건|했|진행)|컨설팅.{0,12}(?:완료|몇 ?건|끝)/,
   ],
   performance: [
-    /\b(?:consultants?'?s?|staff|team|counsell?ors?) (?:performance|ranking|rankings|scores?|leaderboard)\b/i,
-    /\bperformance (?:of|for) (?:the |our |each )?(?:consultants?|staff|team|counsell?ors?)\b/i,
-    /\bperformance (?:page|board|report|today|this month|so far|yesterday)\b/i,
+    new RegExp(`\\b(?:consultants?'?s?|staff|team|counsell?ors?) (?:${PERF}|ranking|rankings|scores?|leaderboard)\\b`, "i"),
+    new RegExp(`\\b${PERF} (?:of|for) (?:the |our |each )?(?:consultants?|staff|team|counsell?ors?)\\b`, "i"),
+    new RegExp(`\\b${PERF} (?:page|board|report|today|this months?|so far|yesterday|monthly|mtd|this week|last week|last month)\\b`, "i"),
+    // The owner writes the period first ("this month's performance", "this months performence", "today's performance").
+    new RegExp(`\\b(?:this month'?s|this months|last month'?s|today'?s|yesterday'?s|this week'?s|last week'?s|monthly|daily|month'?s) ${PERF}\\b`, "i"),
+    // The word on its own, or asked for plainly ("performance", "show me the performance").
+    new RegExp(`^(?:(?:please )?(?:show|give|send|get|check) (?:me |us )?)?(?:the |our )?${PERF}(?: (?:page|board|report))?[?.!]*$`, "i"),
+    // "How did the team do today?", "how did the consultants do this month?" (the bot's own phrasings).
+    new RegExp(
+      `\\bhow(?:'s| (?:did|does|do|has|have|is|are|was|were)) (?:the |our |my )?(?:whole )?(?:team|staff|counsell?ors?|consultants?) (?:do|done|doing|did|perform(?:ed|ing)?|go|going|gone)${PERF_WHEN}`,
+      "i",
+    ),
+    new RegExp(`\\b(?:team|staff)(?:'s)? (?:activity|stats|statistics|scores?|results?)${PERF_WHEN}`, "i"),
     // "Top performers" and "leaderboard" are the portal's words, but also sport's and the market's (FOREIGN).
     /\bleaderboard\b|\btop performers?\b|\b(?:top|best) consultants?\b|\bbest performers?\b/i,
     // "How many files opened in Excel?" is not ours: files and docs need a day.
@@ -485,8 +550,10 @@ function detectIntent(t: string): { intent: Intent; student: StudentQuery | null
   if (namedReport(t)) return { intent: "report", student };
   if (student) return { intent: "student", student };
   if (any(CUES.inquiries, t)) return { intent: "inquiries", student };
-  if (any(CUES.consultancyDone, t)) return { intent: "consultancyDone", student };
-  if (loose && any(CUES.performance, t)) return { intent: "performance", student };
+  if (any(CUES.consultancyDone, t) && !CONSULT_MONEY.test(t) && (!CONSULT_ELSEWHERE.test(t) || CONSULT_OURS.test(t))) {
+    return { intent: "consultancyDone", student };
+  }
+  if (loose && any(CUES.performance, t) && (anchored || !PERF_OTHER.test(t))) return { intent: "performance", student };
   if (any(CUES.passport, t)) return { intent: "passport", student };
   if (loose && !TRAVEL.test(t) && any(CUES.passportLoose, t)) return { intent: "passport", student };
   if (any(CUES.docs, t)) return { intent: "docs", student };
@@ -554,6 +621,25 @@ export function calendarTarget(t: string): string | null {
   return words.join(" ");
 }
 
+const LAST_MONTH = /\blast month'?s?\b|지난 ?달|저번 ?달/i;
+// "this months performence": the owner writes it without the apostrophe.
+const THIS_MONTH = /\bthis months?\b|\bmonth(?:ly)?\b|\bmtd\b|이번 ?달|이달|월간/i;
+// A month named without a day ("consultancies done in September"). "March" and "May" are also verbs: they need "in/for/of/during".
+const NAMED_MONTH =
+  /\b(january|february|april|june|july|august|september|october|november|december)\b|\b(?:in|for|of|during) (march|may)\b/i;
+
+/** A day inside the month a question names on its own (its last day, or today for the current month), else null. */
+function namedMonthDay(t: string, today: string): string | null {
+  if (DAY_MONTH.test(t) || MONTH_DAY.test(t)) return null;
+  const m = NAMED_MONTH.exec(t);
+  if (!m) return null;
+  const month = monthNumber(m[1] ?? m[2]);
+  const first = resolveDay(today, month, 1);
+  if (!first) return null;
+  const last = addDays(firstOfMonth(addDays(first, 32)), -1);
+  return last > today ? today : last;
+}
+
 function semanticKinds(t: string): string[] | undefined {
   if (DOC_WORDS.test(t)) return ["doc_page_text", "doc_verdict", "field_check", "doc_check", "student_documents"];
   if (/\bpassports?\b|여권/i.test(t)) return ["passport_alert", "passport_issue", "student", "student_export"];
@@ -572,6 +658,7 @@ export function classify(text: string, ctx: RouterContext): Plan | null {
   const { today } = ctx;
   const span = daySpan(t, today);
   const singleDay = span?.single ? span.from : today;
+  const monthDay = found.intent === "consultancyDone" || found.intent === "performance" ? namedMonthDay(t, today) : null;
 
   switch (found.intent) {
     case "student": {
@@ -590,12 +677,18 @@ export function classify(text: string, ctx: RouterContext): Plan | null {
       return { intent: "inquiries_on_day", day: singleDay, ...(status ? { status } : {}) };
     }
     case "consultancyDone":
-      if (/\bthis month\b|\bmonth(?:ly)?\b|이번 ?달|이달|월간/i.test(t)) return { intent: "performance", period: "month", day: today };
+      // The portal's page has Today and This Month: a month is its month window, another range is said to be missing.
+      if (LAST_MONTH.test(t)) return { intent: "performance", period: "month", day: previousMonth(today).to };
+      if (THIS_MONTH.test(t)) return { intent: "performance", period: "month", day: today };
+      if (monthDay) return { intent: "performance", period: "month", day: monthDay };
+      if (span && !span.single) return { intent: "consultancies_closed_today", day: span.from, to: span.to };
       return { intent: "consultancies_closed_today", day: singleDay };
     case "performance": {
-      if (/\blast month\b|지난 ?달|저번 ?달/i.test(t)) return { intent: "performance", period: "month", day: previousMonth(today).to };
-      const month = /\bthis month\b|\bmonth(?:ly)?\b|이번 ?달|이달|월간/i.test(t);
-      return { intent: "performance", period: month ? "month" : "today", day: month ? today : singleDay };
+      if (LAST_MONTH.test(t)) return { intent: "performance", period: "month", day: previousMonth(today).to };
+      if (THIS_MONTH.test(t)) return { intent: "performance", period: "month", day: today };
+      if (monthDay) return { intent: "performance", period: "month", day: monthDay };
+      if (span && !span.single) return { intent: "performance", period: "today", day: span.from, to: span.to };
+      return { intent: "performance", period: "today", day: singleDay };
     }
     case "verified":
       return { intent: "verified_on_day", from: span?.from ?? today, to: span?.to ?? today };
@@ -604,7 +697,8 @@ export function classify(text: string, ctx: RouterContext): Plan | null {
     case "window":
       return { intent: "window_review" };
     case "passport":
-      return span?.single ? { intent: "passport_alerts", day: span.from } : { intent: "passport_alerts" };
+      if (!span) return { intent: "passport_alerts" };
+      return span.single ? { intent: "passport_alerts", day: span.from } : { intent: "passport_alerts", from: span.from, to: span.to };
     case "docs":
       return { intent: "doc_verdicts", verdict: verdictFrom(t) };
     case "missing":

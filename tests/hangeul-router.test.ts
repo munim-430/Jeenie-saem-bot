@@ -32,6 +32,73 @@ describe("the owner's question", () => {
   it("names another day when one is asked for", () => {
     expect(plan("how many consultancies were done yesterday?")).toEqual({ intent: "consultancies_closed_today", day: "2026-09-29" });
     expect(plan("how many consultancies this month?")).toEqual({ intent: "performance", period: "month", day: TODAY });
+    // Last month is last month's window, not this month's.
+    expect(plan("how many consultancies last month?")).toEqual({ intent: "performance", period: "month", day: "2026-08-31" });
+    expect(plan("how many consultancies were done in August?")).toEqual({ intent: "performance", period: "month", day: "2026-08-31" });
+  });
+
+  it("a range of days is a range (the answer says the portal has no figure for it), never today's figures", () => {
+    const week = { intent: "consultancies_closed_today", day: "2026-09-24", to: TODAY };
+    expect(plan("how many consultancies were closed this week?")).toEqual(week);
+    expect(plan("how many consultancies were closed in the last 7 days?")).toEqual(week);
+    expect(plan("how many consultancies were closed last week?")).toEqual({ intent: "consultancies_closed_today", day: "2026-09-17", to: "2026-09-23" });
+    expect(plan("consultant performance this week")).toEqual({ intent: "performance", period: "today", day: "2026-09-24", to: TODAY });
+    expect(plan("any passport alerts this week?")).toEqual({ intent: "passport_alerts", from: "2026-09-24", to: TODAY });
+    expect(plan("any passport alerts yesterday?")).toEqual({ intent: "passport_alerts", day: "2026-09-29" });
+  });
+});
+
+describe("the owner's performance phrasings (Hangeul BOT's own, pack 05)", () => {
+  const today = { intent: "performance", period: "today", day: TODAY };
+  const month = { intent: "performance", period: "month", day: TODAY };
+  it.each([
+    ["this month's performance", month],
+    ["This month's performance?", month],
+    ["monthly performance", month],
+    ["performence this month", month],
+    ["this months performence", month],
+    ["how did the consultants do this month?", month],
+    ["who is the top performer this month", month],
+    ["today's performance", today],
+    ["what's today's performance?", today],
+    ["performance today", today],
+    ["perfomance today", today],
+    ["performances today", today],
+    ["how did the team do today", today],
+    ["how's the team doing?", today],
+    ["performance", today],
+    ["show me the performance", today],
+    ["leaderboard", today],
+    ["team activity", today],
+    ["staff stats today", today],
+    ["last month's performance", { intent: "performance", period: "month", day: "2026-08-31" }],
+    ["consultant performance yesterday", { intent: "performance", period: "today", day: "2026-09-29" }],
+  ])("%j → %j", (text, expected) => {
+    expect(plan(text)).toEqual(expected);
+    expect(isHangeulContextQuery(text)).toBe(true);
+    expect(routeQuery({ text, hasImage: false }).agent).toBe("hangeul");
+  });
+
+  it.each([
+    "performance of the stock market this month",
+    "how is the team performance in the premier league this month",
+    "server performance today",
+    "today's performance of the website",
+    "this month's performance review for my employee",
+    "how is everyone doing?",
+    "how did the team do at the hackathon",
+    "team stats for the NBA",
+    "outperform",
+    "performing arts",
+  ])("%j is someone else's performance", (text) => {
+    expect(isHangeulContextQuery(text)).toBe(false);
+    expect(plan(text)).toBeNull();
+  });
+
+  it("a subject that is someone else's stays ours when the agency's own word anchors it", () => {
+    // FOREIGN ("football") would keep the leaderboard out; the word "consultancy" alone keeps it in.
+    expect(plan("show the consultancy leaderboard like a football table")).toEqual(today);
+    expect(plan("show the leaderboard like a football table")).toBeNull();
   });
 });
 
@@ -147,6 +214,8 @@ describe("students named in a question", () => {
     ["Show me Karim's documents", { name: "Karim" }],
     ["passport A00000001", { passport: "A00000001" }],
     ["uid 425", { uid: 425 }],
+    ["what's the stage of student Karim?", { name: "Karim" }],
+    ["open the student called Karim", { name: "Karim" }],
   ])("%j → %j", (text, student) => {
     expect(studentFrom(text)).toEqual(student);
   });
@@ -156,8 +225,39 @@ describe("students named in a question", () => {
     "my friend's passport expired",
     "What's the country's visa policy?",
     "My booking reference is EK1234567",
+    // What students have, not a student's name.
+    "What are the Student Visa Requirements for Korea?",
+    "check student visa requirements for Korea",
+    "what about student visas?",
+    "tell me about student life in Seoul",
+    "tell me about student accommodation in Busan",
+    "info about student loans",
+    "find student discounts for trains",
+    "How is the Student Union at Seoul National?",
   ])("%j names no student", (text) => {
     expect(studentFrom(text)).toBeNull();
+    expect(isHangeulContextQuery(text)).toBe(false);
+  });
+});
+
+describe("consultancy counts are the agency's", () => {
+  it.each([
+    "total consultancy fees",
+    "what's the consultancy fee for a Korean university?",
+    "number of consultancies in Dhaka",
+    "how many consultancies are there in Bangladesh?",
+    "how many consultations did the doctor do today",
+  ])("%j is not a count of the agency's consultancies", (text) => {
+    expect(isHangeulContextQuery(text)).toBe(false);
+    expect(plan(text)).toBeNull();
+  });
+
+  it.each([
+    "how many consultations did we do today",
+    "how many consultancies did we do in Dhaka today?",
+    "how many consultations were done today",
+  ])("%j still is", (text) => {
+    expect(plan(text)).toEqual({ intent: "consultancies_closed_today", day: TODAY });
   });
 });
 

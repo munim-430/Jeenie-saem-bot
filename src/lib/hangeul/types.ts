@@ -194,14 +194,20 @@ export type Plan =
   | { intent: "pending_payments" }
   | { intent: "window_review" }
   | { intent: "doc_verdicts"; student?: StudentQuery; verdict?: string }
-  | { intent: "passport_alerts"; day?: string; student?: StudentQuery }
+  /** `day` for one day, `from`/`to` for a range (scans checked in it), neither for every scan on file. */
+  | { intent: "passport_alerts"; day?: string; from?: string; to?: string; student?: StudentQuery }
   /** `where`: the university or place named ("deadlines for Gachon"); only items that mention it count. */
   | { intent: "calendar_window"; from: string; to: string; where?: string }
   | { intent: "missing_for_student"; student: StudentQuery }
   | { intent: "changes_since"; since: string; sinceLabel: string }
   | { intent: "report"; report: ReportName; day?: string }
-  | { intent: "performance"; period: "today" | "month"; day: string }
-  | { intent: "consultancies_closed_today"; day: string }
+  /**
+   * `to` (period "today" only): a range of days from `day`, which the portal's page does not show (it has Today and
+   * This Month); the answer says so and lists the day windows on file in it.
+   */
+  | { intent: "performance"; period: "today" | "month"; day: string; to?: string }
+  /** `to`: a range of days from `day` (see `performance`), with the requests received day by day. */
+  | { intent: "consultancies_closed_today"; day: string; to?: string }
   | { intent: "students_applied"; from: string; to: string }
   | { intent: "dashboard" }
   | { intent: "data_status" }

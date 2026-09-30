@@ -63,6 +63,8 @@ describe("consultancies closed today (the owner's question)", () => {
   it("answers a past day from its own window, dated by the last run of that day", async () => {
     const { result, en } = await answer("how many consultancies were done yesterday?");
     expect(en).toContain("Consultancies done yesterday (29 Sep): 15");
+    // That day's requests only (the fixtures hold 30 Sep's too): by the day received, with their current status.
+    expect(en).toContain("Requests received yesterday (29 Sep): 4 (Consulted 2, File Opened 1, No Answer 1).");
     expect(result.asOf.consultant_performance).toMatchObject({ job: "full_picture", at: "2026-09-29T17:35:00+00:00" });
     // One job at two times: each time says what it dates.
     expect(asOfLine(result, "en", { now: NOW, timeZone: TZ })).toBe(
@@ -93,6 +95,46 @@ describe("consultancies closed today (the owner's question)", () => {
     expect(ko).toContain("기준: 17:35 (전체 점검)");
     const both = renderAnswer(result, "bilingual", { now: NOW, timeZone: TZ });
     expect(both.split("\n\n—\n\n")).toHaveLength(2);
+  });
+
+  it("a tile the portal left blank reads 'not given on the portal' in each language, headline included", async () => {
+    const data = records().map((r) => {
+      if (r.key !== "today|2026-09-30|summary") return r;
+      const tiles = { ...(r.data.tiles as Record<string, string>) };
+      delete tiles["Consultancies done"];
+      return { ...r, data: { ...r.data, tiles, blank_on_portal: ["tiles.Consultancies done"] } };
+    });
+    const { en, ko } = await answer("how many consultancies were closed today?", NOW, readers({ records: data, runs: runs() }));
+    expect(en).toContain("Consultancies done today (30 Sep): not given on the portal — TEST CONSULTANT C 8");
+    expect(ko).toContain("오늘(9월 30일) 상담 완료: 포털에 입력되지 않음 — TEST CONSULTANT C 8");
+    expect(ko).toContain("• 상담 완료: 포털에 입력되지 않음");
+    expect(ko).not.toContain("not given");
+  });
+
+  it("today's count holds today's requests only, not a neighbouring day's", async () => {
+    const { en } = await answer("how many consultancies were closed today?");
+    expect(en).toContain("Requests received today (30 Sep): 10 (Consulted 6, New 4).");
+    const inquiries = await answer("How many inquiries came in yesterday?");
+    expect(inquiries.en).toContain("Requests received yesterday (29 Sep): 4 (Consulted 2, File Opened 1, No Answer 1).");
+    expect(inquiries.en).not.toContain("TEST REQUESTER 1:");
+    expect(inquiries.en).toContain("• TEST REQUESTER 800: Status Consulted");
+  });
+
+  it("a range of days says the portal has no figure for it, lists the day windows on file and the requests day by day", async () => {
+    const { result, en, ko } = await answer("how many consultancies were closed this week?");
+    expect(result.plan).toEqual({ intent: "consultancies_closed_today", day: "2026-09-24", to: "2026-09-30" });
+    expect(en).toContain("Consultancies done 24 Sep – 30 Sep: not on the portal. Its Consultant Performance page shows only today and this month.");
+    expect(en).toContain("• 29 Sep: Consultancies done 15, Files opened 5");
+    expect(en).toContain("• 30 Sep: Consultancies done 20, Files opened 5");
+    expect(en).toContain("Requests received 24 Sep – 30 Sep: 14.");
+    expect(en).toContain("• 29 Sep: 4");
+    expect(en).toContain("• 30 Sep: 10");
+    // Never today's single-day figure labelled as the week's.
+    expect(en).not.toMatch(/Consultancies done[^\n]*: 20\b/);
+    expect(ko).toContain("9월 24일 ~ 9월 30일 상담 완료: 포털에 없는 수치예요.");
+    const perf = await answer("consultant performance this week");
+    expect(perf.en).toContain("Consultant performance 24 Sep – 30 Sep: not on the portal.");
+    expect(perf.en).not.toContain("on the leaderboard");
   });
 });
 
@@ -141,12 +183,15 @@ describe("not available yet (never 0 for an unread kind)", () => {
   });
 
   it("no brief yet: says so first, then shows the dashboard instead", async () => {
-    const { en } = await answer("Hangeul daily report");
+    const { en, result } = await answer("Hangeul daily report");
     expect(en.startsWith("Daily brief: not available yet.\nHangeul BOT sends its brief at 18:05.\nFrom the portal's dashboard instead:\n\nAt a glance:")).toBe(
       true,
     );
     expect(en).toContain("• Applied this month: 113");
     expect(en).toContain("• Missing documents — students: 161");
+    // The missing brief is dated by nothing: the portal sync (which made other reports) never dates it.
+    expect(result.asOf.report).toBeUndefined();
+    expect(en.trim().split("\n").at(-1)).toBe("As of 17:35 (full picture)");
   });
 
   it("the latest brief, with its day, when there is one", async () => {
@@ -162,6 +207,87 @@ describe("not available yet (never 0 for an unread kind)", () => {
     expect(en).toContain("• Pending payments: 1");
     expect(en).toContain("Today's brief is not available yet; Hangeul BOT sends it at 18:05.");
     expect(result.asOf.report).toEqual({ at: "2026-09-29T12:05:00+00:00", job: "daily_brief", source: "read_at" });
+  });
+});
+
+describe("as of: a day is dated by the runs that read that day", () => {
+  // 12 Sep's requests: only the backfill (29 Sep 22:05) has read them; the full picture reads yesterday and today.
+  const twelfth = [
+    rec("consultation", "500", { scope: "2026-09-12", day: "2026-09-12", read_at: "2026-09-29T15:30:00+00:00", data: { status: "Consulted" } }),
+    rec("consultation", "501", { scope: "2026-09-12", day: "2026-09-12", read_at: "2026-09-29T15:30:00+00:00", data: { status: "New" } }),
+    rec("consultation_day", "2026-09-12", { day: "2026-09-12", read_at: "2026-09-29T15:30:00+00:00", data: { day: "2026-09-12", counts: { All: 2 } } }),
+  ];
+  // A Telegram command at 17:50 that published one day (which one, the run does not say) and the pending list.
+  const command = {
+    job: "command",
+    started_at: "2026-09-30T11:50:00+00:00",
+    finished_at: "2026-09-30T11:50:00+00:00",
+    status: "ok" as const,
+    byKind: { consultation: [1, 0, 0], consultation_day: [0, 0, 1], pending_payment: [0, 0, 1] },
+    failedReads: [],
+  };
+  // The backfill read every day's requests up to its own.
+  const withBackfill = () =>
+    runs().map((r) => (r.job === "backfill" ? { ...r, byKind: { ...r.byKind, consultation: [2, 0, 0], consultation_day: [1, 0, 0] } } : r));
+  const withTwelfth = (list = withBackfill()) => readers({ records: [...records(), ...twelfth], runs: list });
+
+  it("an older day by the backfill that read it, not by the newest full picture", async () => {
+    const { en, result } = await answer("how many inquiries on 12 Sep?", NOW, withTwelfth());
+    expect(en).toContain("Requests received 12 Sep: 2 (Consulted 1, New 1).");
+    expect(result.asOf.consultation).toEqual({ at: "2026-09-29T16:05:00+00:00", job: "backfill", source: "run" });
+    expect(en.trim().split("\n").at(-1)).toBe("As of 29 Sep 22:05 (backfill)");
+  });
+
+  it("yesterday by today's full picture (it reads yesterday too), today by the newest run of today", async () => {
+    const yesterday = await answer("How many inquiries came in yesterday?", NOW, withTwelfth());
+    expect(yesterday.result.asOf.consultation).toMatchObject({ job: "full_picture", at: "2026-09-30T11:35:40+00:00" });
+    const today = await answer("How many inquiries came in today?", NOW, withTwelfth([...withBackfill(), command]));
+    // A command of the same day may date today's requests; it never dates another day's.
+    expect(today.result.asOf.consultation).toMatchObject({ job: "command", at: "2026-09-30T11:50:00+00:00" });
+    const older = await answer("how many inquiries on 12 Sep?", NOW, withTwelfth([...withBackfill(), command]));
+    expect(older.result.asOf.consultation).toMatchObject({ job: "backfill" });
+  });
+
+  it("a command never dates a whole kind", async () => {
+    const { result } = await answer("Any pending payments?", NOW, withTwelfth([...withBackfill(), command]));
+    expect(result.asOf.pending_payment).toMatchObject({ job: "full_picture", at: "2026-09-30T11:35:40+00:00" });
+  });
+
+  it("a range is as fresh as its least recently read day", async () => {
+    const { en, result } = await answer("how many inquiries in the last 30 days?", NOW, withTwelfth());
+    expect(en).toContain("Requests received 1 Sep – 30 Sep: 16.");
+    expect(result.asOf.consultation).toMatchObject({ job: "backfill", at: "2026-09-29T16:05:00+00:00" });
+  });
+
+  it("falls back to the rows' own read_at when no run read that day", async () => {
+    const onlyToday = withBackfill().filter((r) => r.job !== "backfill");
+    const { result } = await answer("how many inquiries on 12 Sep?", NOW, withTwelfth(onlyToday));
+    expect(result.asOf.consultation).toEqual({ at: "2026-09-29T15:30:00+00:00", job: null, source: "read_at" });
+  });
+});
+
+describe("passport alerts", () => {
+  it("a range counts the scans checked in it", async () => {
+    const { en, result } = await answer("any passport alerts in the last 2 days?");
+    expect(result.plan).toEqual({ intent: "passport_alerts", from: "2026-09-29", to: "2026-09-30" });
+    expect(en).toContain("Passport scans checked 29 Sep – 30 Sep: 2, 1 with a problem, 1 alert sent.");
+  });
+
+  it("names the students of the newest problem scans (the rows shown), however many there are", async () => {
+    const alerts: HgRecord[] = [];
+    const students: HgRecord[] = [];
+    for (let uid = 1; uid <= 70; uid++) {
+      // Newer with every uid; the keys' text order ("1|", "10|", ... "7|", "70|", "8|") is not the time order.
+      const checked = `2026-09-${String(10 + Math.floor(uid / 10)).padStart(2, "0")} ${String(uid % 10).padStart(2, "0")}:00`;
+      alerts.push(rec("passport_alert", `${uid}|passport_${uid}.jpg`, { student_uid: uid, day: checked.slice(0, 10), data: { uid: String(uid), status: "DISCREPANCY", checked, sent: false } }));
+      students.push(rec("student", String(uid), { student_uid: uid, student_name: `TEST STUDENT U${uid}`, data: {} }));
+    }
+    const { en } = await answer("any passport problems?", NOW, readers({ records: [...alerts, ...students], runs: runs() }));
+    const rows = en.split("\n").filter((l) => l.startsWith("• ") && l.includes("Status DISCREPANCY"));
+    expect(rows).toHaveLength(40);
+    for (const row of rows) expect(row).toMatch(/^• TEST STUDENT U\d+: /);
+    // The newest scan (uid 70, 17 Sep 00:00) leads the table.
+    expect(rows[0]).toContain("TEST STUDENT U70:");
   });
 });
 
@@ -340,6 +466,39 @@ describe("the prose number check", () => {
     const { text, dropped } = checkProse("Busy day, 부장님: 20 consultancies done. That's 45% better than last week!", facts);
     expect(text).toBe("Busy day, 부장님: 20 consultancies done.");
     expect(dropped).toEqual(["That's 45% better than last week!"]);
+  });
+
+  it("a time or a date in the answer never lets a bare count through (the as-of line's 02:35, '1 Oct')", () => {
+    // The owner's question, answered at the start of 1 Oct.
+    const rendered = [
+      "Consultancies done today (1 Oct): 0.",
+      "Requests received today (1 Oct): 0.",
+      "",
+      "• Consultancies done: 0",
+      "• Files opened: 0",
+      "• Conversion (file open): 0%",
+      "• Docs ready: 0",
+      "",
+      "As of 02:35 (full picture)",
+    ].join("\n");
+    expect(checkProse("Your team closed 35 consultancies today.", rendered).text).toBe("");
+    expect(checkProse("Your team closed 2 consultancies today.", rendered).text).toBe("");
+    expect(checkProse("Your team closed 1 consultancy today.", rendered).text).toBe("");
+    expect(checkProse("Your team closed 20 consultancies today.", rendered).text).toBe("");
+    // The same time, the same date and the real counts still pass.
+    expect(checkProse("Nothing closed yet: 0 so far, as of 02:35.", rendered).text).toBe("Nothing closed yet: 0 so far, as of 02:35.");
+    expect(checkProse("As of 2:35 am on 1 October, 0 done.", rendered).text).toBe("As of 2:35 am on 1 October, 0 done.");
+    expect(checkProse("By 03:35 nothing was done.", rendered).text).toBe("");
+    expect(checkProse("Nothing on 2 Oct.", rendered).text).toBe("");
+    // Korean: "10월 1일" is a date, not the counts 10 and 1.
+    const ko = "오늘(10월 1일) 상담 완료: 0.\n\n기준: 02:35 (전체 점검)";
+    expect(checkProse("오늘 1건 끝났어요.", ko).text).toBe("");
+    expect(checkProse("10월 1일 기준 0건이에요.", ko).text).toBe("10월 1일 기준 0건이에요.");
+    // An id's digits are not counts either.
+    expect(proseNumbersOk("1 passport was flagged.", "• Passport: A00000001")).toBe(false);
+    expect(proseNumbersOk("A00000001 was flagged.", "• Passport: A00000001")).toBe(true);
+    expect(proseNumbersOk("HNG-2026-012 is verified.", "TEST STUDENT ONE (HNG-2026-012, portal uid 101)")).toBe(true);
+    expect(proseNumbersOk("12 students are verified.", "TEST STUDENT ONE (HNG-2026-012, portal uid 101)")).toBe(false);
   });
 
   it("keeps at most two sentences and drops everything when every sentence fails", () => {
