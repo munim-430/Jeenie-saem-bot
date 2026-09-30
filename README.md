@@ -86,6 +86,45 @@ or down, Jeannie answers without memory.
 
 `.mcp.json` registers the project's read-only Supabase MCP server for Claude Code (`claude /mcp` to authenticate).
 
+## Hangeul question embeddings (Edge Function `hg-embed`)
+
+[`supabase/functions/hg-embed/index.ts`](supabase/functions/hg-embed/index.ts) turns question text into gte-small
+vectors (384 numbers, mean pooled, normalised) so Jeannie's server can search Hangeul BOT's chunks with `hg_match`
+before a device has its own model loaded. It runs the Edge Runtime's built-in `Supabase.ai.Session('gte-small')`, the
+ONNX export of the model the bot embeds with, so there is no model download and no extra key.
+
+- **Request.** `POST https://dcbcbpwpmdtaanboetiz.supabase.co/functions/v1/hg-embed` with `{"texts": ["..."]}`:
+  1 to 16 non-blank texts of at most 2,000 characters each, and a body of at most 128 KB.
+- **Key.** A project secret key (`sb_secret_…`) in the `apikey` header, or the legacy `service_role` key in
+  `Authorization: Bearer`. Any of the project's secret keys works: the function reads `SUPABASE_SECRET_KEYS` and
+  `SUPABASE_SERVICE_ROLE_KEY`, which Supabase sets. Publishable and anon keys never do. With no key configured it
+  answers 503 and embeds nothing.
+- **Answer.** `{"embeddings": [[…384 numbers…], …], "model": "gte-small", "dims": 384}`, one vector per text, in order.
+- **Errors.** JSON `{"error", "code"}`, never repeating a text or a key: 401 `unauthorized`; 405 `method_not_allowed`;
+  400 `invalid_json`, `invalid_body`, `no_texts`, `too_many_texts`, `invalid_text`, `empty_text`, `text_too_long` or
+  `unreadable_body`; 413 `body_too_large`; 503 `not_configured` or `model_unavailable`; 500 `embed_failed` or
+  `bad_embedding`.
+
+**Deploy.** The owner runs this after review. The repo has no `supabase/config.toml`, so the JWT setting goes on the
+command:
+
+```bash
+supabase functions deploy hg-embed --no-verify-jwt --project-ref dcbcbpwpmdtaanboetiz
+```
+
+`--no-verify-jwt` is required. The gateway's JWT check doesn't understand `sb_secret_…` keys, so the function checks
+the key itself. A later deploy without the flag turns the gateway check back on, and the secret key is then refused.
+
+**Smoke test.** After deploying, send a question (never student data) and expect 384 numbers back:
+
+```bash
+curl -s -X POST "https://dcbcbpwpmdtaanboetiz.supabase.co/functions/v1/hg-embed" \
+  -H "apikey: $SUPABASE_SECRET_KEY" -H "content-type: application/json" \
+  -d '{"texts": ["How many consultancies were closed today?"]}' | head -c 300
+```
+
+The same call without the `apikey` header must answer 401.
+
 ## Deploy to Vercel
 
 1. **Merge to `main`.** Merge the pull request (or push your branch) so `munim430-ai/Jeenie-saem-bot` has the code.
@@ -219,6 +258,7 @@ src/
     └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
 tests/            Vitest suites for agents and routes
 supabase/migrations/  memory tables, search function, audit state
+supabase/functions/hg-embed/  question embeddings for Hangeul search (Edge Function)
 ```
 
 The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `route.ts` file, so it lives at `api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
