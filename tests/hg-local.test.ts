@@ -218,6 +218,45 @@ describe.each(STORES)("sync (%s)", (_name, open) => {
     expect((await store.meta()).max_seq).toBe(MAX_SEQ);
   });
 
+  it("keeps the FIRST page's max_seq even when later pages report a newer one", async () => {
+    const store = await open();
+    const f = feed();
+    const moving: HgTransport = { ...f.transport, snapshot: async (cursor, signal) => ({ ...(await f.transport.snapshot(cursor, signal)), max_seq: cursor ? 900 : MAX_SEQ }) };
+    expect((await runFirstSync(store, moving)).maxSeq).toBe(MAX_SEQ);
+    expect((await store.meta()).max_seq).toBe(MAX_SEQ);
+  });
+
+  it("starts the first sync over when the server no longer opens its saved cursor (a rotated key)", async () => {
+    const store = await open();
+    const f = feed();
+    f.failSnapshotAt = 14;
+    await expect(runFirstSync(store, f.transport)).rejects.toThrow("network down");
+    f.failSnapshotAt = undefined;
+    const refused = Object.assign(new Error("cursor is not one this server issued."), { status: 400, code: "invalid_cursor" });
+    // The saved cursor was sealed under the old key; the cursors issued after the restart open again.
+    let stale = true;
+    const rotated: HgTransport = {
+      ...f.transport,
+      snapshot: async (cursor, signal) => {
+        if (cursor === "14" && stale) {
+          stale = false;
+          throw refused;
+        }
+        return f.transport.snapshot(cursor, signal);
+      },
+    };
+    f.calls.length = 0;
+    const first = await runFirstSync(store, rotated);
+    expect(f.calls[0]).toBe("snapshot:first");
+    expect(first.records).toBe(f.all.length);
+    expect(await store.meta()).toMatchObject({ complete: true, max_seq: MAX_SEQ, snapshot_next: null });
+    expect((await store.counts()).records).toBe(f.all.length);
+    // Refused again after the restart: that is an error, not a loop.
+    const always: HgTransport = { ...f.transport, snapshot: async (cursor) => (cursor ? Promise.reject(refused) : f.transport.snapshot(null)) };
+    await store.write({ ops: [], meta: { complete: false, snapshot_next: "7", snapshot_seq: MAX_SEQ } });
+    await expect(runFirstSync(store, always)).rejects.toBe(refused);
+  });
+
   it("clear() removes every record, chunk and the sync state", async () => {
     const store = await open();
     await syncOnce(store, feed(100).transport);
@@ -298,6 +337,13 @@ function nearly(v: Float32Array): number[] {
   return out;
 }
 
+/** A unit vector at exactly cosine `c` to the one-hot `v`: c along v, the rest along the next axis. */
+function atCosine(v: Float32Array, c: number): number[] {
+  const out = Array.from(v, (x) => x * c);
+  out[(Array.from(v).findIndex((x) => x !== 0) + 1) % out.length] += Math.sqrt(1 - c * c);
+  return out;
+}
+
 async function copyOf(store: HgLocalStore, embed: DeviceCopy["embed"]): Promise<DeviceCopy> {
   const meta = await store.meta();
   return { store, meta, index: async () => buildIndex(await store.chunks()), embed };
@@ -347,6 +393,20 @@ describe("embed-model check", () => {
     expect(Array.from(decodeVector(String(hints?.embedding)))).toEqual(vectorOf(bankAt));
     // Only that student's documents are searched (HNG-2026-012 is uid 101); the best one leads.
     expect(hints?.hits?.[0]).toEqual({ kind: "doc_verdict", key: BANK });
+  });
+
+  it("the floor is 0.98: a sample at cosine 0.97 fails the check, one at 0.985 passes", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(MODEL_CHECK_MIN).toBe(0.98);
+    const { store } = await syncedStore();
+    const samples = await pickCheckSamples(store, await store.chunks());
+    const at = (c: number) => async () => samples.map((s) => atCosine(s.embedding, c));
+    const low = await checkEmbedModel(samples, at(0.97), NOW);
+    expect(low.status).toBe("mismatch");
+    expect(low.min).toBeCloseTo(0.97, 4);
+    const high = await checkEmbedModel(samples, at(0.985), NOW);
+    expect(high.status).toBe("ok");
+    expect(high.min).toBeCloseTo(0.985, 4);
   });
 
   it("a model that cannot load is 'unavailable' (checked again later), not a mismatch", async () => {
@@ -424,6 +484,10 @@ describe("answering from the device copy", () => {
     const later = new Date(NOW.getTime() + FRESH_MS + 1_000);
     expect(await ask("how many consultancies were closed today?", store, "en", later)).toMatchObject({ mode: "server", reason: "stale" });
     const meta = await store.meta();
+    // Six minutes: the delta runs every five while the HUD is open. Pinned as a number, not FRESH_MS.
+    const synced = new Date(meta.synced_at ?? "").getTime();
+    expect(copyIsFresh(meta, new Date(synced + 6 * 60_000 - 1_000))).toBe(true);
+    expect(copyIsFresh(meta, new Date(synced + 6 * 60_000 + 1_000))).toBe(false);
     expect(copyIsFresh(meta, NOW)).toBe(true);
     expect(copyIsFresh({ ...meta, runs: null }, NOW)).toBe(false);
     expect(copyIsFresh({ ...meta, complete: false }, NOW)).toBe(false);

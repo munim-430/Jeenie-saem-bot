@@ -2,7 +2,7 @@
 // Supabase), over PostgREST with the server-only secret key. Read-only: this
 // module never calls hg_sync or writes anything.
 //
-// Every read has a timeout (3 s for answers, 10 s for the bulk device sync)
+// Every read has a timeout (3 s for answers, 15 s for the bulk device sync)
 // and fails closed with a plain reason (HangeulReadError): a failed read is
 // never an empty list or a silent 0 (R5). Reasons and logs never carry row
 // data, keys or URLs. Edge-safe (fetch, btoa; no Node APIs), because the chat
@@ -34,7 +34,17 @@ import {
 import { EMBEDDING_DIMENSIONS, encodeVector, parsePgVector } from "./vectors";
 
 export const READ_TIMEOUT_MS = 3_000;
-export const BULK_TIMEOUT_MS = 10_000;
+/** One bulk request (a snapshot batch, a changes page). Capped by the snapshot page's own deadline. */
+export const BULK_TIMEOUT_MS = 15_000;
+/**
+ * Chunks per request while paging the snapshot. Content and vector together are
+ * ~4 KB a chunk: 500 of them took 7-16 s from the PC (1 Oct), 100 about 1.7 s.
+ */
+export const SNAPSHOT_CHUNK_PAGE = 100;
+/** A snapshot page starts no new batch after this (it sends what it has; the device asks for the rest). */
+export const SNAPSHOT_SOFT_MS = 30_000;
+/** No request of a snapshot page may run past this: the route's maxDuration is 60 s. */
+export const SNAPSHOT_HARD_MS = 50_000;
 /** hg_match answers in ~0.3 s warm, but a cold HNSW scan was seen to pass 3 s (live check, 1 Oct). */
 export const MATCH_TIMEOUT_MS = 6_000;
 /** PostgREST's max-rows. */
@@ -455,27 +465,66 @@ interface SnapshotCursor {
   a: string | null;
 }
 
-function toBase64Url(value: string): string {
-  const b = new TextEncoder().encode(value);
+function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of b) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromBase64Url(value: string): string {
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
   const b64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
-  return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
 }
 
-export function encodeCursor(cursor: SnapshotCursor): string {
-  return toBase64Url(JSON.stringify(cursor));
+// The cursor goes out in a GET query string (request logs, proxies, the
+// browser's network log), and its last key is a record key: a passport number
+// and a file name for most kinds. So it is sealed (AES-256-GCM, key derived
+// with HKDF from the server's secret key): opaque to everyone but this server,
+// and a cursor that was altered or issued under another key does not open.
+const CURSOR_IV_BYTES = 12;
+const CURSOR_MAX_CHARS = 2_048;
+const utf8 = new TextEncoder();
+let cursorKeyCache: { secret: string; key: Promise<CryptoKey> } | null = null;
+
+function cursorKey(): Promise<CryptoKey> {
+  const secret = getEnv().memory.serviceKey;
+  if (!secret) return Promise.reject(new HangeulReadError("Hangeul data is not configured", "not_configured"));
+  if (cursorKeyCache?.secret !== secret) {
+    const key = crypto.subtle
+      .importKey("raw", utf8.encode(secret), "HKDF", false, ["deriveKey"])
+      .then((base) =>
+        crypto.subtle.deriveKey(
+          { name: "HKDF", hash: "SHA-256", salt: utf8.encode("jeannie-hg-snapshot-cursor"), info: utf8.encode("v1") },
+          base,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"],
+        ),
+      );
+    cursorKeyCache = { secret, key };
+  }
+  return cursorKeyCache.key;
 }
 
-/** A cursor from a client, or null when it is not one of ours. */
-export function decodeCursor(value: string): SnapshotCursor | null {
+/** The cursor, sealed: base64url of IV + AES-GCM ciphertext. Nothing in it is readable without the server's key. */
+export async function encodeCursor(cursor: SnapshotCursor): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(CURSOR_IV_BYTES));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await cursorKey(), utf8.encode(JSON.stringify(cursor))));
+  const out = new Uint8Array(iv.length + sealed.length);
+  out.set(iv);
+  out.set(sealed, iv.length);
+  return toBase64Url(out);
+}
+
+/** A cursor from a client, or null when it is not one this server sealed (or it was altered). */
+export async function decodeCursor(value: string): Promise<SnapshotCursor | null> {
   try {
-    const c = JSON.parse(fromBase64Url(value)) as Partial<SnapshotCursor>;
+    if (value.length > CURSOR_MAX_CHARS) return null;
+    const bytes = fromBase64Url(value);
+    if (bytes.length <= CURSOR_IV_BYTES + 16) return null;
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, CURSOR_IV_BYTES) }, await cursorKey(), bytes.slice(CURSOR_IV_BYTES));
+    const c = JSON.parse(new TextDecoder().decode(plain)) as Partial<SnapshotCursor>;
     if (c.v !== 1 || !Number.isInteger(c.s) || !Number.isInteger(c.k) || (c.s as number) < 0) return null;
     if ((c.k as number) < 0 || (c.k as number) > HG_KINDS.length) return null;
     if (c.a !== null && typeof c.a !== "string") return null;
@@ -493,21 +542,21 @@ export interface SnapshotPage {
   next: string | null;
 }
 
-/** Records per request while paging a kind (the OCR pages are large). */
+/** Records per request while paging a kind (the OCR pages are large, and have several chunks each). */
 function snapshotBatch(kind: string): number {
-  return kind === "doc_page_text" ? 150 : 500;
+  return kind === "doc_page_text" ? 60 : 200;
 }
 
-async function chunksFor(kind: string, records: HgRecord[], options: StoreOptions): Promise<Map<string, WireChunk[]>> {
+async function chunksFor(kind: string, records: HgRecord[], options: () => StoreOptions): Promise<Map<string, WireChunk[]>> {
   const out = new Map<string, WireChunk[]>();
   if (records.length === 0) return out;
   const byKey = new Map(records.map((r) => [r.key, r]));
   const first = records[0].key;
   const last = records[records.length - 1].key;
-  for (let offset = 0; ; offset += 500) {
+  for (let offset = 0; ; offset += SNAPSHOT_CHUNK_PAGE) {
     const rows = await get<{ key?: unknown; ord?: unknown; content?: unknown; embedding?: unknown; embed_model?: unknown }[]>(
-      `hg_chunks?select=key,ord,content,embedding,embed_model&kind=eq.${enc(kind)}&key=gte.${enc(first)}&key=lte.${enc(last)}&order=key.asc,ord.asc&limit=500&offset=${offset}`,
-      options,
+      `hg_chunks?select=key,ord,content,embedding,embed_model&kind=eq.${enc(kind)}&key=gte.${enc(first)}&key=lte.${enc(last)}&order=key.asc,ord.asc&limit=${SNAPSHOT_CHUNK_PAGE}&offset=${offset}`,
+      options(),
     );
     if (!Array.isArray(rows)) throw new HangeulReadError("Hangeul data returned malformed chunks", "invalid");
     for (const raw of rows) {
@@ -519,9 +568,14 @@ async function chunksFor(kind: string, records: HgRecord[], options: StoreOption
       if (list) list.push(chunk);
       else out.set(key, [chunk]);
     }
-    if (rows.length < 500) break;
+    if (rows.length < SNAPSHOT_CHUNK_PAGE) break;
   }
   return out;
+}
+
+export interface SnapshotOptions extends StoreOptions {
+  /** Clock override (tests): milliseconds, like Date.now. */
+  now?: () => number;
 }
 
 /**
@@ -529,28 +583,52 @@ async function chunksFor(kind: string, records: HgRecord[], options: StoreOption
  * kind in HG_KINDS order and key order within a kind, cut to the byte budget.
  * The first page (no cursor) reads max_seq before anything else, so applying
  * the changes after it on top of the snapshot converges on the current data.
+ *
+ * A page also has a time budget, so it always ends inside the route's 60 s: no
+ * new batch starts after SNAPSHOT_SOFT_MS, no request runs past SNAPSHOT_HARD_MS,
+ * and a batch that times out after others were done ends the page with those
+ * (the cursor stops after the last whole batch; the device asks for the rest).
  */
-export async function readSnapshotPage(cursorText: string | null, options: StoreOptions = {}): Promise<SnapshotPage> {
-  const bulk = { timeoutMs: BULK_TIMEOUT_MS, ...options };
+export async function readSnapshotPage(cursorText: string | null, options: SnapshotOptions = {}): Promise<SnapshotPage> {
+  const clock = options.now ?? Date.now;
+  const started = clock();
+  const storeOptions: StoreOptions = { signal: options.signal, timeoutMs: options.timeoutMs };
+  const elapsed = () => clock() - started;
+  const bulk = (): StoreOptions => ({
+    ...storeOptions,
+    timeoutMs: Math.max(1, Math.min(storeOptions.timeoutMs ?? BULK_TIMEOUT_MS, SNAPSHOT_HARD_MS - elapsed())),
+  });
   let cursor: SnapshotCursor;
   if (cursorText) {
-    const decoded = decodeCursor(cursorText);
+    const decoded = await decodeCursor(cursorText);
     if (!decoded) throw new HangeulReadError("invalid snapshot cursor", "invalid");
     cursor = decoded;
   } else {
-    cursor = { v: 1, s: await readMaxSeq(bulk), k: 0, a: null };
+    cursor = { v: 1, s: await readMaxSeq(bulk()), k: 0, a: null };
   }
   const records: HgRecord[] = [];
   const chunks: WireChunk[] = [];
   let total = 0;
+  // Each whole batch moves the cursor; once one has, the page may end early with what it holds (even no records).
+  const initial = cursor;
   while (cursor.k < HG_KINDS.length) {
+    if (cursor !== initial && elapsed() >= SNAPSHOT_SOFT_MS) break;
     const kind = HG_KINDS[cursor.k];
     const batch = snapshotBatch(kind);
     const params = [`kind=eq.${enc(kind)}`, ...(cursor.a !== null ? [`key=gt.${enc(cursor.a)}`] : []), "order=key.asc"];
-    const rows = await get<RawRecord[]>(`hg_records?select=*&${params.join("&")}&limit=${batch}`, bulk);
-    if (!Array.isArray(rows)) throw new HangeulReadError("Hangeul data returned malformed rows", "invalid");
-    const found = rows.map(toRecord);
-    const foundChunks = await chunksFor(kind, found, bulk);
+    let rows: RawRecord[];
+    let found: HgRecord[];
+    let foundChunks: Map<string, WireChunk[]>;
+    try {
+      rows = await get<RawRecord[]>(`hg_records?select=*&${params.join("&")}&limit=${batch}`, bulk());
+      if (!Array.isArray(rows)) throw new HangeulReadError("Hangeul data returned malformed rows", "invalid");
+      found = rows.map(toRecord);
+      foundChunks = await chunksFor(kind, found, bulk);
+    } catch (error) {
+      // A slow batch after others were gathered: send those now, this batch comes on the next page.
+      if (cursor !== initial && error instanceof HangeulReadError && error.code === "unreachable") break;
+      throw error;
+    }
     let lastSent: string | null = null;
     let kept = 0;
     for (const record of found) {
@@ -566,12 +644,12 @@ export async function readSnapshotPage(cursorText: string | null, options: Store
     if (kept < found.length) {
       // The budget ran out inside this kind: continue after the last record of it sent (if any).
       if (lastSent !== null) cursor = { ...cursor, a: lastSent };
-      return { max_seq: cursor.s, records, chunks, next: encodeCursor(cursor) };
+      return { max_seq: cursor.s, records, chunks, next: await encodeCursor(cursor) };
     }
     cursor = rows.length < batch ? { ...cursor, k: cursor.k + 1, a: null } : { ...cursor, a: found[found.length - 1].key };
     if (total >= PAGE_BYTES * 0.9) break;
   }
-  return { max_seq: cursor.s, records, chunks, next: cursor.k < HG_KINDS.length ? encodeCursor(cursor) : null };
+  return { max_seq: cursor.s, records, chunks, next: cursor.k < HG_KINDS.length ? await encodeCursor(cursor) : null };
 }
 
 // ─── Search ─────────────────────────────────────────────────────────────────

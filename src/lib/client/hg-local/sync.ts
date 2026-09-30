@@ -152,6 +152,12 @@ export function changeOps(changes: readonly WireChange[]): { ops: LocalOp[]; ups
   return { ops, upserts, deletes };
 }
 
+/** The server no longer opens this cursor (it is sealed with the server's key, which may have been rotated). */
+function isInvalidCursor(error: unknown): boolean {
+  const e = error as { status?: unknown; code?: unknown } | null;
+  return !!e && typeof e === "object" && e.status === 400 && e.code === "invalid_cursor";
+}
+
 /** Pages through the snapshot into the store (resuming a first sync cut short). No-op when the copy is complete. */
 export async function runFirstSync(store: HgLocalStore, transport: HgTransport, options: SyncOptions = {}): Promise<{ pages: number; records: number; maxSeq: number }> {
   const now = options.now ?? (() => new Date());
@@ -164,9 +170,27 @@ export async function runFirstSync(store: HgLocalStore, transport: HgTransport, 
   let pages = 0;
   let records = 0;
   let chunks = 0;
+  let restarted = false;
   for (;;) {
     aborted(options.signal);
-    const page = checkSnapshotPage(await transport.snapshot(cursor, options.signal));
+    let raw: SnapshotPage;
+    try {
+      raw = await transport.snapshot(cursor, options.signal);
+    } catch (error) {
+      // A saved cursor the server refuses would stop every later sync: start the first sync over, once.
+      if (cursor && !restarted && isInvalidCursor(error)) {
+        restarted = true;
+        await store.clear();
+        cursor = null;
+        seq = null;
+        pages = 0;
+        records = 0;
+        chunks = 0;
+        continue;
+      }
+      throw error;
+    }
+    const page = checkSnapshotPage(raw);
     aborted(options.signal);
     if (seq === null) seq = page.max_seq;
     const built = snapshotOps(page);

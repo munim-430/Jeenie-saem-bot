@@ -322,10 +322,131 @@ describe("snapshot paging", () => {
 
   it("rejects a cursor it did not issue", async () => {
     stubPostgrest(db());
-    expect(decodeCursor("not-a-cursor")).toBeNull();
-    expect(decodeCursor(encodeCursor({ v: 1, s: 5, k: 2, a: "k|1" }))).toEqual({ v: 1, s: 5, k: 2, a: "k|1" });
+    expect(await decodeCursor("not-a-cursor")).toBeNull();
+    expect(await decodeCursor(await encodeCursor({ v: 1, s: 5, k: 2, a: "k|1" }))).toEqual({ v: 1, s: 5, k: 2, a: "k|1" });
     const error = (await readSnapshotPage("bm9wZQ").catch((e: unknown) => e)) as HangeulReadError;
     expect(error.message).toBe("invalid snapshot cursor");
+  });
+
+  it("seals the cursor: it goes out in a GET query string, so no record key can be read from it", async () => {
+    // Keys of the kinds most pages end inside: a passport number and a file name that holds a student's name.
+    const pages = Array.from({ length: 300 }, (_, i) =>
+      rec("doc_page_text", `A${String(i).padStart(8, "0")}|TEST STUDENT ONE bank statement.pdf|p1`, { scope: `A${i}`, content: `Page:\n${"y".repeat(20_000)}` }),
+    );
+    stubPostgrest({ records: pages, chunks: pages.map((r, i) => ({ kind: r.kind, key: r.key, ord: 0, content: r.content, embedding: unit(i), embed_model: MODEL })), runs: [], changes: [] });
+    const issued: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await readSnapshotPage(cursor);
+      cursor = page.next;
+      if (cursor) issued.push(cursor);
+    } while (cursor && issued.length < 20);
+    expect(issued.length).toBeGreaterThan(1);
+    for (const c of issued) {
+      const decoded = Buffer.from(c, "base64url").toString("latin1");
+      for (const needle of ["A000", "TEST STUDENT", "bank statement", "|p1", '"a"', '"k"']) expect(decoded).not.toContain(needle);
+      expect(() => JSON.parse(decoded)).toThrow();
+    }
+    // Two cursors for the same position differ (a fresh IV each time), and each still opens.
+    const same = { v: 1 as const, s: 3, k: 20, a: "A00000001|x.pdf|p1" };
+    const [one, two] = [await encodeCursor(same), await encodeCursor(same)];
+    expect(one).not.toBe(two);
+    expect(await decodeCursor(two)).toEqual(same);
+  });
+
+  it("refuses a cursor that was altered, sealed under another key, or in the old readable form", async () => {
+    stubPostgrest(db());
+    const cursor = await encodeCursor({ v: 1, s: 5, k: 2, a: "k|1" });
+    const bytes = Buffer.from(cursor, "base64url");
+    bytes[bytes.length - 1] ^= 1;
+    expect(await decodeCursor(bytes.toString("base64url"))).toBeNull();
+    const readable = Buffer.from(JSON.stringify({ v: 1, s: 5, k: 2, a: "k|1" })).toString("base64url");
+    expect(await decodeCursor(readable)).toBeNull();
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_another_key");
+    expect(await decodeCursor(cursor)).toBeNull();
+    const error = (await readSnapshotPage(cursor).catch((e: unknown) => e)) as HangeulReadError;
+    expect(error.message).toBe("invalid snapshot cursor");
+  });
+
+  it("reads chunks 100 at a time (content and vector together are slow in bulk)", async () => {
+    const { calls } = stubPostgrest(big());
+    await readSnapshotPage(null);
+    const chunkCalls = calls.filter((c) => c.path === "/rest/v1/hg_chunks");
+    expect(chunkCalls.length).toBeGreaterThan(0);
+    for (const c of chunkCalls) expect(c.params.get("limit")).toBe("100");
+    const recordCalls = calls.filter((c) => c.path === "/rest/v1/hg_records");
+    for (const c of recordCalls) expect(Number(c.params.get("limit"))).toBeLessThanOrEqual(200);
+  });
+
+  it("ends a page inside its time budget, and the pages still cover every record once", async () => {
+    const data = big();
+    let clock = 0;
+    // Every request takes 7 s: a page starts no batch after 30 s, so it ends well inside the route's 60 s.
+    stubPostgrest(data, () => {
+      clock += 7_000;
+      return null;
+    });
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      clock = 0;
+      const page = await readSnapshotPage(cursor, { now: () => clock });
+      expect(clock).toBeLessThanOrEqual(60_000);
+      for (const r of page.records) {
+        expect(seen.has(`${r.kind}|${r.key}`)).toBe(false);
+        seen.add(`${r.kind}|${r.key}`);
+      }
+      cursor = page.next;
+      pages++;
+    } while (cursor && pages < 100);
+    expect(seen.size).toBe(data.records.length);
+  });
+
+  it("a batch that times out after others were gathered ends the page with those; the next page resumes", async () => {
+    const data = big();
+    let chunkCalls = 0;
+    stubPostgrest(data, (call) => {
+      if (call.path === "/rest/v1/hg_chunks" && ++chunkCalls === 4) throw new DOMException("slow", "TimeoutError");
+      return null;
+    });
+    const first = await readSnapshotPage(null);
+    expect(first.records.length).toBeGreaterThan(0);
+    expect(first.next).not.toBeNull();
+    const seen = new Set(first.records.map((r) => `${r.kind}|${r.key}`));
+    let cursor = first.next;
+    while (cursor) {
+      const page = await readSnapshotPage(cursor);
+      for (const r of page.records) seen.add(`${r.kind}|${r.key}`);
+      cursor = page.next;
+    }
+    expect(seen.size).toBe(data.records.length);
+    // With nothing gathered yet, a timeout is the plain reason.
+    stubPostgrest(data, (call) => {
+      if (call.path === "/rest/v1/hg_records") throw new DOMException("slow", "TimeoutError");
+      return null;
+    });
+    const error = (await readSnapshotPage(null).catch((e: unknown) => e)) as HangeulReadError;
+    expect(error.message).toBe("Hangeul data unreachable (timeout)");
+  });
+
+  it("a body that stops arriving is a timeout with its reason, not a bare 'unreachable'", async () => {
+    stubPostgrest(db(), (call) =>
+      call.path === "/rest/v1/hg_records"
+        ? new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("[{"));
+                controller.error(new DOMException("The operation timed out.", "TimeoutError"));
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          )
+        : null,
+    );
+    const error = (await readRecords("student").catch((e: unknown) => e)) as HangeulReadError;
+    expect(error).toBeInstanceOf(HangeulReadError);
+    expect(error.message).toBe("Hangeul data unreachable (timeout)");
   });
 });
 
