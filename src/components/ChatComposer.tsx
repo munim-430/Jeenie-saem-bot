@@ -13,6 +13,7 @@ import { Camera, ImagePlus, LoaderCircle, Mic, SendHorizontal, Square, Volume2, 
 import type { ChatPhase } from "@/hooks/useJeannieChat";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { prepareImageFile } from "@/lib/client/image";
+import { canSendMessage } from "@/lib/client/reachability";
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { LanguageToggle } from "./LanguageToggle";
@@ -73,7 +74,7 @@ export function ChatComposer({
   const pressRef = useRef<{ startedByPress: boolean; at: number }>({ startedByPress: false, at: 0 });
   const sentAtRef = useRef(0);
   const busy = phase !== "idle";
-  const canSend = (draft.trim().length > 0 || attachment !== null) && !preparing && !disabled;
+  const canSend = canSendMessage({ draft, hasAttachment: attachment !== null, preparing, disabled });
   // While she speaks, STOP silences her; typing a new message brings SEND back.
   const showStop = busy || (speaking && !canSend);
 

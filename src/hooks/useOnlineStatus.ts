@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer } from "react";
 import { fetchSystemStatus, onReachability } from "@/lib/client/api";
-import { INITIAL_REACHABILITY, isOffline, probeDelay, reduceReachability, type Reachability } from "@/lib/client/reachability";
+import { INITIAL_REACHABILITY, isOffline, reduceReachability, startProbeLoop, type Reachability } from "@/lib/client/reachability";
 
 export interface OnlineStatus extends Reachability {
   /** Show the offline banner and disable the input (spec D10). */
@@ -17,7 +17,6 @@ export interface OnlineStatus extends Reachability {
  */
 export function useOnlineStatus(): OnlineStatus {
   const [state, dispatch] = useReducer(reduceReachability, INITIAL_REACHABILITY);
-  const attemptRef = useRef(0);
 
   useEffect(() => {
     dispatch({ type: "browser", online: navigator.onLine !== false });
@@ -37,25 +36,12 @@ export function useOnlineStatus(): OnlineStatus {
   // A successful probe reports reachability itself (every request does).
   const probing = state.browserOnline && !state.apiReachable;
   useEffect(() => {
-    if (!probing) {
-      attemptRef.current = 0;
-      return;
-    }
+    if (!probing) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const schedule = () => {
-      timer = setTimeout(() => {
-        fetchSystemStatus(controller.signal).catch(() => {
-          if (controller.signal.aborted) return;
-          attemptRef.current += 1;
-          schedule();
-        });
-      }, probeDelay(attemptRef.current));
-    };
-    schedule();
+    const stop = startProbeLoop(() => fetchSystemStatus(controller.signal));
     return () => {
       controller.abort();
-      if (timer !== undefined) clearTimeout(timer);
+      stop();
     };
   }, [probing]);
 

@@ -48,6 +48,50 @@ export function probeDelay(attempt: number): number {
   return Math.min(MAX_PROBE_MS, FIRST_PROBE_MS * 2 ** n);
 }
 
+/**
+ * The one send the HUD uses (composer, quick commands, smart-home tiles, DAILY
+ * REPORT, voice): nothing is sent while offline, and the caller is told (false).
+ */
+export function sendUnlessOffline<A extends unknown[]>(isOffline: () => boolean, send: (...args: A) => boolean): (...args: A) => boolean {
+  return (...args: A) => (isOffline() ? false : send(...args));
+}
+
+/** Composer rule: something to send (text or an image), not still preparing an image, and online. */
+export function canSendMessage(input: { draft: string; hasAttachment: boolean; preparing: boolean; disabled: boolean }): boolean {
+  return (input.draft.trim().length > 0 || input.hasAttachment) && !input.preparing && !input.disabled;
+}
+
+/**
+ * Re-probes until `probe` resolves: after 2 s, then 4, 8, 16 and every 30 s
+ * (probeDelay). Returns a stop function. The timers are injected so the loop is
+ * tested without a browser; useOnlineStatus runs it with setTimeout.
+ */
+export function startProbeLoop(
+  probe: () => Promise<unknown>,
+  timers: { set: (run: () => void, ms: number) => unknown; clear: (handle: unknown) => void } = {
+    set: (run, ms) => setTimeout(run, ms),
+    clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  },
+): () => void {
+  let attempt = 0;
+  let stopped = false;
+  let handle: unknown;
+  const schedule = () => {
+    handle = timers.set(() => {
+      probe().catch(() => {
+        if (stopped) return;
+        attempt += 1;
+        schedule();
+      });
+    }, probeDelay(attempt));
+  };
+  schedule();
+  return () => {
+    stopped = true;
+    if (handle !== undefined) timers.clear(handle);
+  };
+}
+
 /** The banner's words, in both of the HUD's languages. */
 export const OFFLINE_LINE = {
   en: "Offline: Jeannie needs a connection",

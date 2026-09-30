@@ -77,3 +77,11 @@ no DOM test setup in the repo, so their logic lives in `reachability.ts`.
   "Uplink unreachable"; once the server was back, the re-probe of `/api/status` cleared it by itself. The pane
   refuses service-worker registration ("unknown error when fetching the script") although `/sw.js` answers 200 as
   JavaScript, so the worker's rules rest on `tests/pwa.test.ts` and the phone check.
+- 1 Oct 2026 (review fixes): offline, the smart-home tiles, the thermostat -/+ and the Hangeul Data panel's DAILY
+  REPORT were still enabled; a tap flipped the tile while `send()` dropped the command. They are now disabled with
+  the offline line as their title, a tile flips only when its command was sent (`sendToggle`), and a debounced
+  thermostat setting that finds the HUD offline goes back to the last one sent. The wiring is now tested
+  (`tests/offline-controls.test.ts`): `api.ts` with a stubbed fetch (a thrown fetch reports unreachable, any HTTP
+  answer reachable, a timeout or a user abort nothing), the send guard (`sendUnlessOffline`), the composer rule
+  (`canSendMessage`) and the re-probe loop (`startProbeLoop`) as pure helpers, and the banner, composer, tiles and
+  DAILY REPORT rendered with `react-dom/server` (no new dependency; `vitest.config.mts` compiles the components' JSX).

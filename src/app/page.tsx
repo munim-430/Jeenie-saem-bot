@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { AccessKeyDialog, type AccessKeyReason } from "@/components/AccessKeyDialog";
 import { AvatarReturnButton, AvatarScreen } from "@/components/AvatarScreen";
@@ -28,6 +28,7 @@ import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
 import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
+import { sendUnlessOffline } from "@/lib/client/reachability";
 import { spokenText } from "@/lib/client/speech-text";
 import type { LangMode } from "@/lib/types";
 import { cn, resolveLanguage } from "@/lib/utils";
@@ -118,10 +119,7 @@ export default function JeannieHud() {
 
   // Every send (composer, quick commands, IoT tiles, voice) goes through here: nothing is sent while offline.
   const { send: chatSend } = chat;
-  const send = useCallback(
-    (text: string, image?: string | null): boolean => (offlineRef.current ? false : chatSend(text, image)),
-    [chatSend],
-  );
+  const send = useMemo(() => sendUnlessOffline(() => offlineRef.current, chatSend), [chatSend]);
 
   // Opening line: a Korean greeting for the operator's time of day. Once per page load,
   // after the status says whether a key is needed (a 401 here would be noise).
@@ -271,9 +269,8 @@ export default function JeannieHud() {
     setKeyDialog((prev) => ({ ...prev, open: false }));
   };
 
-  const sendCommand = (command: string) => {
-    send(command);
-  };
+  // False when nothing was sent (offline): a smart-home tile then keeps its state.
+  const sendCommand = (command: string): boolean => send(command);
 
   const conversationCount = chat.messages.filter((m) => m.role !== "system").length;
   const replyLang = chat.messages.findLast((m) => m.role === "assistant" && m.lang)?.lang ?? null;
@@ -357,6 +354,7 @@ export default function JeannieHud() {
               hasAccessKey={hasAccessKey}
               lang={lang}
               onCommand={sendCommand}
+              offline={offline}
               telemetry={chat.telemetry}
               messageCount={conversationCount}
               voiceEngine={speech.engine}

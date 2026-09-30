@@ -5,6 +5,7 @@ import { Activity, Cpu, FileText, House, RefreshCw, Send } from "lucide-react";
 import type { ChatTelemetry } from "@/hooks/useJeannieChat";
 import { formatClock, formatDuration, useNow } from "@/hooks/useNow";
 import { ApiRequestError, fetchHangeulData, isAbortError } from "@/lib/client/api";
+import { OFFLINE_LINE } from "@/lib/client/reachability";
 import type { HangeulDataStatus, HangeulRunSummary, LangMode, ResolvedLang, SystemStatus, TtsEngine } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AgentBadge } from "./ChatMessageView";
@@ -267,10 +268,13 @@ function HangeulPanel({
   statusReady,
   hasAccessKey,
   locked,
+  offline = false,
 }: {
   /** Whether the server has the Supabase project Hangeul BOT publishes to (null until /api/status answers). */
   configured: boolean | null;
   onReport: () => void;
+  /** Offline (spec D10): DAILY REPORT cannot be sent, so it is disabled. */
+  offline?: boolean;
   statusReady: boolean;
   /** The API needs a key and none is stored: skip the request that would 401. */
   locked: boolean;
@@ -346,6 +350,8 @@ function HangeulPanel({
         <button
           type="button"
           onClick={onReport}
+          disabled={offline}
+          title={offline ? OFFLINE_LINE.en : undefined}
           aria-label="Ask Jeannie for the Hangeul daily brief"
           className="hud-btn hud-btn-primary shrink-0 px-2.5 font-mono text-[0.64rem] tracking-[0.12em]"
         >
@@ -364,7 +370,10 @@ interface TacticalMetricsProps {
   onRetryStatus: () => void;
   hasAccessKey: boolean;
   lang: LangMode;
-  onCommand: (command: string) => void;
+  /** Sends a command through the chat; false when it was not sent (offline). */
+  onCommand: (command: string) => boolean | void;
+  /** Offline (spec D10): the smart-home tiles and DAILY REPORT are disabled, like the composer. */
+  offline?: boolean;
   telemetry: ChatTelemetry;
   messageCount: number;
   voiceEngine: TtsEngine | null;
@@ -384,6 +393,7 @@ export function TacticalMetrics({
   hasAccessKey,
   lang,
   onCommand,
+  offline = false,
   telemetry,
   messageCount,
   voiceEngine,
@@ -402,7 +412,7 @@ export function TacticalMetrics({
         hasAccessKey={hasAccessKey}
       />
       <HudPanel title="Smart Home" subtitle="스마트홈" icon={<House />} delay={0.12}>
-        <IoTControlGrid lang={lang} onCommand={onCommand} />
+        <IoTControlGrid lang={lang} onCommand={onCommand} offline={offline} offlineText={OFFLINE_LINE.en} />
       </HudPanel>
       <TelemetryPanel
         telemetry={telemetry}
@@ -416,6 +426,7 @@ export function TacticalMetrics({
         statusReady={!statusLoading}
         hasAccessKey={hasAccessKey}
         locked={Boolean(status?.accessKeyRequired) && !hasAccessKey}
+        offline={offline}
         onReport={() => onCommand("Hangeul daily report")}
       />
       {children}
