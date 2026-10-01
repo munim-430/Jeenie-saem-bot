@@ -28,3 +28,12 @@ export function awayMsFrom(raw: string | null, now: number): number | undefined 
   if (!Number.isFinite(seen) || seen <= 0 || seen > now) return undefined;
   return now - seen;
 }
+
+/** Desktop HUD layout, chosen with the header's 1 | 2 switch: classic HUD or Jeannie in the left frame. */
+export type DesktopLayout = "hud" | "avatar";
+
+export const DESKTOP_LAYOUT_STORAGE_KEY = "jeannie.desktopLayout";
+
+export function isDesktopLayout(value: unknown): value is DesktopLayout {
+  return value === "hud" || value === "avatar";
+}
