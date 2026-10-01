@@ -674,3 +674,61 @@
   justify-content: flex-end;
   gap: 0.35rem;
 }
+
+/* Desktop HUD avatar frame (AvatarPanel): she stands in the left column on her own backdrop. */
+.avatar-panel {
+  background: #dbc7c7;
+  color: #3b1f2b;
+  container-type: inline-size;
+}
+.avatar-panel .avatar-video {
+  /* The whole figure, head to heels, whatever the frame's shape; the plain backdrop fills the rest. */
+  object-fit: contain;
+}
+.avatar-emotes {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: rgba(35, 16, 26, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.avatar-emote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  color: #fff;
+  transition:
+    background-color 150ms ease,
+    transform 150ms ease;
+}
+.avatar-emote > svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+.avatar-emote:hover {
+  background: rgba(255, 0, 127, 0.55);
+}
+.avatar-emote:active {
+  transform: scale(0.92);
+}
+.avatar-emote:focus-visible {
+  outline: 2px solid #ff007f;
+  outline-offset: 2px;
+}
+.avatar-fab-desk {
+  width: 3.5rem;
+  height: 3.5rem;
+  background: rgba(255, 0, 127, 0.78);
+}
+/* A narrow frame (short screens) has no room for the emote row beside the mic: stack it. */
+@container (max-width: 260px) {
+  .avatar-emotes {
+    flex-direction: column;
+  }
+}

@@ -194,7 +194,7 @@ function TelemetryPanel({
   const placeholder = "--:--:--";
   return (
     <HudPanel title="Telemetry" subtitle="원격 측정" icon={<Activity />} delay={0.2}>
-      <dl className="grid grid-cols-3 gap-1.5 lg:grid-cols-2 xl:grid-cols-3">
+      <dl className="grid grid-cols-3 gap-1.5 lg:grid-cols-2 min-[1700px]:grid-cols-3">
         <Readout label="Local" value={now ? formatClock(now) : placeholder} />
         <Readout label="Seoul KST" value={now ? formatClock(now, "Asia/Seoul") : placeholder} />
         <Readout

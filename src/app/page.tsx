@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { AccessKeyDialog, type AccessKeyReason } from "@/components/AccessKeyDialog";
+import { AvatarPanel } from "@/components/AvatarPanel";
 import { AvatarReturnButton, AvatarScreen } from "@/components/AvatarScreen";
 import { CameraScanner } from "@/components/CameraScanner";
 import { ChatTerminal, type Attachment } from "@/components/ChatTerminal";
@@ -16,6 +17,7 @@ import { useAvatarDirector } from "@/hooks/useAvatarDirector";
 import { useIdleWatch } from "@/hooks/useIdleWatch";
 import { useJeannieChat } from "@/hooks/useJeannieChat";
 import { useLastSeen } from "@/hooks/useLastSeen";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
@@ -27,6 +29,9 @@ import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+
+/** Matches Tailwind's `xl`: below it five dock cards get too cramped, so the HUD keeps the orb layout. */
+const WIDE_HUD_QUERY = "(min-width: 1280px)";
 
 export default function JeannieHud() {
   const [lang, setLang] = usePersistentState<LangMode>("jeannie.lang", "auto", isLangMode);
@@ -46,6 +51,11 @@ export default function JeannieHud() {
   // Phones get the avatar screen, everything else the HUD (null until hydrated).
   const viewMode = useViewMode();
   const avatarMode = viewMode.view === "avatar";
+  // Wide HUD (desktop): Jeannie stands in the left frame and the panels move to a dock below.
+  const wideScreen = useMediaQuery(WIDE_HUD_QUERY);
+  const desktopAvatar = viewMode.view === "hud" && wideScreen === true;
+  // Either way she is on screen, so she bows, reacts and checks in.
+  const avatarOnScreen = avatarMode || desktopAvatar;
   const awayMs = useLastSeen();
 
   const system = useSystemStatus();
@@ -174,14 +184,14 @@ export default function JeannieHud() {
   const bowedRef = useRef(false);
   const { play: playEmote } = director;
   useEffect(() => {
-    if (!avatarMode || bowedRef.current) return;
+    if (!avatarOnScreen || bowedRef.current) return;
     bowedRef.current = true;
     playEmote("greeting");
-  }, [avatarMode, playEmote]);
+  }, [avatarOnScreen, playEmote]);
 
   // Idle behaviour (avatar screen only): one spoken check-in after ~3 min (the director plays the idle sequence).
   useIdleWatch({
-    enabled: avatarMode,
+    enabled: avatarOnScreen,
     busy: speech.speaking || speech.preparing || recognition.listening || chat.phase !== "idle",
     onCheckIn: () => {
       const line = pickCheckIn();
@@ -244,6 +254,59 @@ export default function JeannieHud() {
   const replyLang = chat.messages.findLast((m) => m.role === "assistant" && m.lang)?.lang ?? null;
   const latestReply = chat.messages.findLast((m) => m.role === "assistant") ?? null;
 
+  const renderChat = (className: string) => (
+    <ChatTerminal
+      className={className}
+      messages={chat.messages}
+      phase={chat.phase}
+      speaking={speech.speaking || speech.preparing}
+      lang={lang}
+      onLangChange={setLang}
+      voiceOn={voiceOn}
+      onVoiceToggle={toggleVoice}
+      attachment={attachment}
+      onAttach={setAttachment}
+      onOpenCamera={() => setCameraOpen(true)}
+      onSend={chat.send}
+      onStop={() => {
+        chat.stop();
+        speech.stop();
+      }}
+      onClear={() => {
+        chat.clear();
+        speech.stop();
+      }}
+      onNotice={chat.notify}
+      recognition={voiceInput}
+    />
+  );
+
+  const renderPanels = (className: string) => (
+    <TacticalMetrics
+      className={className}
+      status={system.status}
+      statusLoading={system.loading}
+      statusError={system.error}
+      onRetryStatus={system.refresh}
+      hasAccessKey={hasAccessKey}
+      lang={lang}
+      onCommand={sendCommand}
+      telemetry={chat.telemetry}
+      messageCount={conversationCount}
+      voiceEngine={speech.engine}
+      replyLang={replyLang}
+      sessionStart={sessionStart}
+    >
+      <MemoryPanel
+        configured={Boolean(system.status?.memory?.configured)}
+        accessKeyRequired={keyNeeded}
+        hasAccessKey={hasAccessKey}
+        statusReady={statusLoaded}
+        onNotice={chat.notify}
+      />
+    </TacticalMetrics>
+  );
+
   return (
     <MotionConfig reducedMotion="user">
       {viewMode.view === null ? <div className="view-pending-backdrop" aria-hidden="true" /> : null}
@@ -272,69 +335,44 @@ export default function JeannieHud() {
             onAccessKey={() => setKeyDialog({ open: true, reason: "manage" })}
           />
 
-          <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,300px)_minmax(0,1fr)_minmax(340px,400px)] xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)_minmax(400px,460px)] 2xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(460px,540px)]">
-            <ReactorCore
-              className="order-1 h-[350px] sm:h-[420px] lg:order-2 lg:h-auto lg:min-h-0 lg:py-2"
-              state={orbState}
-              getLevel={getLevel}
-              // The real spectrum only while server audio plays through it; the mic has no samples.
-              analyser={speech.speaking && speech.routed ? speech.analyser : null}
-              activeAgent={chat.telemetry.activeAgent}
-              provider={system.status?.llm.provider ?? chat.telemetry.provider}
-              voiceEngine={speech.engine}
-              preparingVoice={chat.phase === "idle" && speech.preparing}
-              lang={lang}
-            />
-
-            <ChatTerminal
-              className="order-2 h-[72svh] min-h-[460px] lg:order-3 lg:h-auto lg:min-h-0"
-              messages={chat.messages}
-              phase={chat.phase}
-              speaking={speech.speaking || speech.preparing}
-              lang={lang}
-              onLangChange={setLang}
-              voiceOn={voiceOn}
-              onVoiceToggle={toggleVoice}
-              attachment={attachment}
-              onAttach={setAttachment}
-              onOpenCamera={() => setCameraOpen(true)}
-              onSend={chat.send}
-              onStop={() => {
-                chat.stop();
-                speech.stop();
-              }}
-              onClear={() => {
-                chat.clear();
-                speech.stop();
-              }}
-              onNotice={chat.notify}
-              recognition={voiceInput}
-            />
-
-            <TacticalMetrics
-              className="order-3 md:grid md:grid-cols-2 md:items-start lg:order-1 lg:flex lg:min-h-0 lg:items-stretch lg:overflow-y-auto lg:overscroll-contain lg:pb-1 lg:pr-1"
-              status={system.status}
-              statusLoading={system.loading}
-              statusError={system.error}
-              onRetryStatus={system.refresh}
-              hasAccessKey={hasAccessKey}
-              lang={lang}
-              onCommand={sendCommand}
-              telemetry={chat.telemetry}
-              messageCount={conversationCount}
-              voiceEngine={speech.engine}
-              replyLang={replyLang}
-              sessionStart={sessionStart}
-            >
-              <MemoryPanel
-                configured={Boolean(system.status?.memory?.configured)}
-                accessKeyRequired={keyNeeded}
-                hasAccessKey={hasAccessKey}
-                statusReady={statusLoaded}
-                onNotice={chat.notify}
+          {desktopAvatar ? (
+            <main className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_auto] gap-3">
+              <AvatarPanel
+                // Exactly her clips' 9:16 shape at the row's height: head to heels, no side bars.
+                className="aspect-[9/16] h-full min-h-0"
+                director={director}
+                recognition={voiceInput}
+                voiceLevel={speech.getLevel}
+                voiceMeasured={speech.routed}
               />
-            </TacticalMetrics>
-          </main>
+              {renderChat("min-h-0")}
+              {/* The dock: every panel as an equal card, each scrolling inside its own height. */}
+              {renderPanels(
+                "col-span-2 grid h-[clamp(230px,33vh,340px)] grid-cols-5 items-stretch gap-3 [&>*]:min-h-0 [&>*]:overflow-y-auto [&>*]:overscroll-contain",
+              )}
+            </main>
+          ) : (
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,300px)_minmax(0,1fr)_minmax(340px,400px)] xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)_minmax(400px,460px)] 2xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(460px,540px)]">
+              <ReactorCore
+                className="order-1 h-[350px] sm:h-[420px] lg:order-2 lg:h-auto lg:min-h-0 lg:py-2"
+                state={orbState}
+                getLevel={getLevel}
+                // The real spectrum only while server audio plays through it; the mic has no samples.
+                analyser={speech.speaking && speech.routed ? speech.analyser : null}
+                activeAgent={chat.telemetry.activeAgent}
+                provider={system.status?.llm.provider ?? chat.telemetry.provider}
+                voiceEngine={speech.engine}
+                preparingVoice={chat.phase === "idle" && speech.preparing}
+                lang={lang}
+              />
+
+              {renderChat("order-2 h-[72svh] min-h-[460px] lg:order-3 lg:h-auto lg:min-h-0")}
+
+              {renderPanels(
+                "order-3 md:grid md:grid-cols-2 md:items-start lg:order-1 lg:flex lg:min-h-0 lg:items-stretch lg:overflow-y-auto lg:overscroll-contain lg:pb-1 lg:pr-1",
+              )}
+            </main>
+          )}
         </div>
       )}
       {viewMode.view === "hud" && viewMode.isPhone ? (
