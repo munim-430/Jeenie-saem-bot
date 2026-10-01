@@ -30,6 +30,7 @@ Also included:
 - **Voice out:** ElevenLabs first, then Microsoft Edge neural voices (`en-US-JennyNeural`, `ko-KR-SunHiNeural`, no API key needed), then the browser's built-in speech. The audio drives the orb and the spectrum visualizer.
 - **Voice in:** push-to-talk speech recognition in English or Korean, using the browser's Web Speech API.
 - **HUD:** a canvas arc-reactor orb, a spectrum analyzer, a translucent chat terminal, tactical telemetry, IoT control tiles, and a camera scanner.
+- **Desktop views (1280px and wider):** the header's **1 HUD | 2 Avatar** switch picks the layout. Option 2 (the default) puts Jeannie full-body in the left frame with a hold-to-talk mic and emote buttons, the chat on the right and the panels in a bottom dock; Option 1 is the classic HUD with the reactor orb. The choice is remembered per browser.
 - **Telegram bridge:** two-way bot. Chat with Jeannie, send photos for analysis, run `/report`, `/search`, and `/status`.
 - **Language modes:** Auto-detect, English, Korean, or bilingual (English then Korean). You can also ask for "both languages" in any message.
 - **Honorifics:** replies call you 부장님 by default and 자기야 when the message is personal (tiredness, missing her, good night). Audit, Hangeul, search, vision and smart-home replies always use 부장님. Greetings use 부장님 from 09:00 to 18:00 local time and 자기야 otherwise.

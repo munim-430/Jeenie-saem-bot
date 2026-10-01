@@ -24,6 +24,7 @@ import { useSpeechRecognition, type RecognitionLang, type SpeechRecognitionState
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
+import { DESKTOP_LAYOUT_STORAGE_KEY, isDesktopLayout, type DesktopLayout } from "@/lib/avatar/view-mode";
 import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -53,7 +54,13 @@ export default function JeannieHud() {
   const avatarMode = viewMode.view === "avatar";
   // Wide HUD (desktop): Jeannie stands in the left frame and the panels move to a dock below.
   const wideScreen = useMediaQuery(WIDE_HUD_QUERY);
-  const desktopAvatar = viewMode.view === "hud" && wideScreen === true;
+  // Option 2 (avatar) unless the header's 1 | 2 switch picked Option 1 (classic HUD) on this device.
+  const [desktopLayout, setDesktopLayout] = usePersistentState<DesktopLayout>(
+    DESKTOP_LAYOUT_STORAGE_KEY,
+    "avatar",
+    isDesktopLayout,
+  );
+  const desktopAvatar = viewMode.view === "hud" && wideScreen === true && desktopLayout === "avatar";
   // Either way she is on screen, so she bows, reacts and checks in.
   const avatarOnScreen = avatarMode || desktopAvatar;
   const awayMs = useLastSeen();
@@ -281,9 +288,10 @@ export default function JeannieHud() {
     />
   );
 
-  const renderPanels = (className: string) => (
+  const renderPanels = (className: string, dock = false) => (
     <TacticalMetrics
       className={className}
+      dock={dock}
       status={system.status}
       statusLoading={system.loading}
       statusError={system.error}
@@ -333,6 +341,8 @@ export default function JeannieHud() {
             statusError={system.error}
             hasAccessKey={hasAccessKey}
             onAccessKey={() => setKeyDialog({ open: true, reason: "manage" })}
+            desktopLayout={wideScreen === true ? desktopLayout : undefined}
+            onDesktopLayoutChange={setDesktopLayout}
           />
 
           {desktopAvatar ? (
@@ -349,6 +359,7 @@ export default function JeannieHud() {
               {/* The dock: every panel as an equal card, each scrolling inside its own height. */}
               {renderPanels(
                 "col-span-2 grid h-[clamp(230px,33vh,340px)] grid-cols-5 items-stretch gap-3 [&>*]:min-h-0 [&>*]:overflow-y-auto [&>*]:overscroll-contain",
+                true,
               )}
             </main>
           ) : (
