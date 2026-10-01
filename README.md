@@ -204,25 +204,11 @@ Everyone else, and any failed live call, gets clearly labeled mock data. `MOCK_M
 
 ## Project layout
 
-```
-src/
-├── app/
-│   ├── api/{chat,search,tts,hangeul,status,session,memory}/route.ts
-│   ├── api/telegram/webhook/route.ts
-│   ├── layout.tsx · page.tsx · globals.css      # the pink hologram HUD
-├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · MemoryPanel · CameraScanner
-├── hooks/        chat streaming, voice output, speech recognition
-└── lib/
-    ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent · hangeul-bridge
-    │             tts-engine · edge-tts · llm · persona · etiquette · audit-flow
-    ├── memory/   chunk (markdown/JSONL chunking, secret guard, search terms) · store · supabase
-    ├── client/   typed fetch wrappers for the HUD
-    └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
-tests/            Vitest suites for agents and routes
-supabase/migrations/  memory tables, search function, audit state
-```
+The full map of the repo, the site map, every Python program, the data flow (what is collected, where it goes
+and why, with risks) and a module-by-module code reference are in [`docs/`](docs/README.md).
 
-The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `route.ts` file, so it lives at `api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
+Route files follow the App Router convention: the brief's `api/telegram/webhook.ts` lives at
+`api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
 
 ## Agent skills
 
