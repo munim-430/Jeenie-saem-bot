@@ -18,6 +18,11 @@ export const KLING_NAMES = {
   concern: "concern",
   supportive: "supportive",
   heartbeat: "heartbeat",
+  // Outfit idles: pinned to their own outfit anchor (assets/avatar/source/outfit-*.png), not NEUTRAL.
+  idle_sweater: "idle_sweater",
+  idle_tube: "idle_tube",
+  idle_modest: "idle_modest",
+  idle_orange: "idle_orange",
 };
 
 /**
@@ -25,10 +30,10 @@ export const KLING_NAMES = {
  * service worker still holds the previous set fetches the new files on the first open.
  * Must match CLIP_VERSION in src/lib/avatar/clips.ts (a test checks both).
  */
-export const CLIP_VERSION = "k3";
+export const CLIP_VERSION = "k5";
 
 /** Clips the player loops while their state lasts (sway is played one cycle at a time). */
-const LOOPS = new Set(["idle", "talking"]);
+const LOOPS = new Set(["idle", "talking", "idle_sweater", "idle_tube", "idle_modest", "idle_orange"]);
 
 /**
  * @param {{ clips: { id: string, file: string | null, verdict: string }[] }} clipsJson

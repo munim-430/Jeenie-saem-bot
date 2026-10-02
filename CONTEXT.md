@@ -17,6 +17,12 @@ contact, faint composed smile. Higgsfield media `ecc09fc0-847a-4ca4-b2eb-a1a4a08
 shyness → heartbeat → sway, then again. Each step hands over on its last (NEUTRAL) frame. Talking or
 the mic drops the current step at once; a reply emote waits for the step to end.
 
+**Outfit** — what she wears: `pink` (the suit, every clip), `sweater`, `tube`, `modest`, `orange`.
+Each non-pink outfit has an anchor still (the NEUTRAL pose, clothing changed; ADR 0002) and, for now,
+one idle loop pinned to it. In another outfit, idle, listening and talking all play that loop; a
+reply emote plays the pink clip, then hands back. The idle sequence runs only in pink. A change of
+outfit cuts at once under a sparkle. Chosen with the wardrobe button; kept in `localStorage` only.
+
 **Carrier** — the gross body motion that makes an emote read at phone size (lean, weight shift, nod,
 shoulders). Faces alone do not read under a double pin. A carrier must never bring a hand to the
 torso: that makes Kling re-render the clothing.
@@ -24,7 +30,8 @@ torso: that makes Kling re-render the clothing.
 **Accept gate** — three parts, all mandatory. `scripts/avatar-clips/gate.py` measures 1 and 2 and
 writes the evidence for 3.
 
-1. **Closure**, measured against NEUTRAL, not the clip's own first frame:
+1. **Closure**, measured against the clip's anchor (NEUTRAL for pink clips, the outfit's anchor for an
+   outfit clip; `gate.py`'s 4th argument), not the clip's own first frame:
 
    | Class | Measure |
    |---|---|

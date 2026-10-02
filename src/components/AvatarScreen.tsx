@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { WardrobeButton } from "@/components/WardrobeButton";
 import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
@@ -30,7 +31,7 @@ interface AvatarScreenProps {
 
 /** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
 const VOICE_TEST_PATTERN_MS = { on: 1200, off: 800, cycles: 4 };
-const TALKING_CUE = { emote: "talking", key: "talking", loop: true, focus: false } as const;
+const TALKING_CUE = { emote: "talking", outfit: "pink", key: "talking", loop: true, focus: false } as const;
 
 export function AvatarScreen({
   director,
@@ -98,15 +99,19 @@ export function AvatarScreen({
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-        <button
-          type="button"
-          className="avatar-fab avatar-fab-sm"
-          onClick={onSwitchToHud}
-          aria-label="Switch to HUD view"
-          title="HUD view"
-        >
-          <LayoutDashboard className="h-5 w-5" aria-hidden="true" />
-        </button>
+        {/* Small controls grouped bottom-left, clear of her feet; the mic stays big on the right. */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="avatar-fab avatar-fab-sm"
+            onClick={onSwitchToHud}
+            aria-label="Switch to HUD view"
+            title="HUD view"
+          >
+            <LayoutDashboard className="h-[1.1rem] w-[1.1rem]" aria-hidden="true" />
+          </button>
+          <WardrobeButton director={director} className="avatar-fab-sm" align="left" />
+        </div>
 
         <button
           type="button"

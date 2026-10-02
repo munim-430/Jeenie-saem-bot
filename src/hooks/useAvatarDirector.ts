@@ -1,8 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useState } from "react";
-import { CLIP_MANIFEST_URL, DEFAULT_CLIPS, clipNameFor, mergeClipManifest, type ClipTable } from "@/lib/avatar/clips";
+import {
+  CLIP_MANIFEST_URL,
+  DEFAULT_CLIPS,
+  clipNameFor,
+  isOutfit,
+  mergeClipManifest,
+  type ClipTable,
+  type Outfit,
+} from "@/lib/avatar/clips";
 import { INITIAL_DIRECTOR, baseStateOf, cueOf, directorReducer, type ClipCue } from "@/lib/avatar/director";
+import { usePersistentState } from "@/hooks/usePersistentState";
 import type { ReplyEmote } from "@/lib/emote";
 
 // Grace on top of a one-shot's duration before we assume its `ended` event is lost
@@ -22,6 +31,9 @@ export interface AvatarDirector {
   play: (emote: ReplyEmote) => void;
   /** The stage finished the one-shot for `cue.key`. */
   ended: () => void;
+  /** What she wears (remembered on this device). */
+  outfit: Outfit;
+  setOutfit: (outfit: Outfit) => void;
 }
 
 export function useAvatarDirector({ listening, speaking }: { listening: boolean; speaking: boolean }): AvatarDirector {
@@ -30,6 +42,9 @@ export function useAvatarDirector({ listening, speaking }: { listening: boolean;
 
   const base = baseStateOf({ listening, speaking });
   useEffect(() => dispatch({ type: "base", base }), [base]);
+
+  const [outfit, setOutfit] = usePersistentState<Outfit>("jeannie.outfit", "pink", isOutfit);
+  useEffect(() => dispatch({ type: "outfit", outfit }), [outfit]);
 
   // The static table already works; the manifest only refreshes durations / placeholders.
   useEffect(() => {
@@ -51,5 +66,5 @@ export function useAvatarDirector({ listening, speaking }: { listening: boolean;
   const play = useCallback((emote: ReplyEmote) => dispatch({ type: "emote", emote }), []);
   const ended = useCallback(() => dispatch({ type: "ended", seq }), [seq]);
 
-  return { cue: cueOf(state), clips, play, ended };
+  return { cue: cueOf(state), clips, play, ended, outfit, setOutfit };
 }

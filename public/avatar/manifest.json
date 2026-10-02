@@ -1,15 +1,15 @@
 {
   "idle": {
-    "src": "/avatar/idle.mp4?v=k3",
-    "poster": "/avatar/idle.jpg?v=k3",
+    "src": "/avatar/idle.mp4?v=k5",
+    "poster": "/avatar/idle.jpg?v=k5",
     "duration": 6.042,
     "loop": true,
     "placeholder": false,
     "source": "kling"
   },
   "talking": {
-    "src": "/avatar/talking.mp4?v=k3",
-    "poster": "/avatar/talking.jpg?v=k3",
+    "src": "/avatar/talking.mp4?v=k5",
+    "poster": "/avatar/talking.jpg?v=k5",
     "duration": 8.042,
     "loop": true,
     "placeholder": false,
@@ -93,8 +93,8 @@
     "source": "kling"
   },
   "sway": {
-    "src": "/avatar/sway.mp4?v=k3",
-    "poster": "/avatar/sway.jpg?v=k3",
+    "src": "/avatar/sway.mp4?v=k5",
+    "poster": "/avatar/sway.jpg?v=k5",
     "duration": 8.042,
     "loop": false,
     "placeholder": false,
@@ -122,106 +122,138 @@
     "placeholder": false
   },
   "supportive": {
-    "src": "/avatar/supportive.mp4?v=k3",
-    "poster": "/avatar/supportive.jpg?v=k3",
+    "src": "/avatar/supportive.mp4?v=k5",
+    "poster": "/avatar/supportive.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "concern": {
-    "src": "/avatar/concern.mp4?v=k3",
-    "poster": "/avatar/concern.jpg?v=k3",
+    "src": "/avatar/concern.mp4?v=k5",
+    "poster": "/avatar/concern.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "sadness": {
-    "src": "/avatar/sadness.mp4?v=k3",
-    "poster": "/avatar/sadness.jpg?v=k3",
+    "src": "/avatar/sadness.mp4?v=k5",
+    "poster": "/avatar/sadness.jpg?v=k5",
     "duration": 7.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "love": {
-    "src": "/avatar/love.mp4?v=k3",
-    "poster": "/avatar/love.jpg?v=k3",
+    "src": "/avatar/love.mp4?v=k5",
+    "poster": "/avatar/love.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "heartbeat": {
-    "src": "/avatar/heartbeat.mp4?v=k3",
-    "poster": "/avatar/heartbeat.jpg?v=k3",
+    "src": "/avatar/heartbeat.mp4?v=k5",
+    "poster": "/avatar/heartbeat.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "shyness": {
-    "src": "/avatar/shyness.mp4?v=k3",
-    "poster": "/avatar/shyness.jpg?v=k3",
+    "src": "/avatar/shyness.mp4?v=k5",
+    "poster": "/avatar/shyness.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "curiosity": {
-    "src": "/avatar/curiosity.mp4?v=k3",
-    "poster": "/avatar/curiosity.jpg?v=k3",
+    "src": "/avatar/curiosity.mp4?v=k5",
+    "poster": "/avatar/curiosity.jpg?v=k5",
     "duration": 5.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "excitement": {
-    "src": "/avatar/excitement.mp4?v=k3",
-    "poster": "/avatar/excitement.jpg?v=k3",
+    "src": "/avatar/excitement.mp4?v=k5",
+    "poster": "/avatar/excitement.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "playful": {
-    "src": "/avatar/playful.mp4?v=k3",
-    "poster": "/avatar/playful.jpg?v=k3",
+    "src": "/avatar/playful.mp4?v=k5",
+    "poster": "/avatar/playful.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "stress": {
-    "src": "/avatar/stress.mp4?v=k3",
-    "poster": "/avatar/stress.jpg?v=k3",
+    "src": "/avatar/stress.mp4?v=k5",
+    "poster": "/avatar/stress.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "frustration": {
-    "src": "/avatar/frustration.mp4?v=k3",
-    "poster": "/avatar/frustration.jpg?v=k3",
+    "src": "/avatar/frustration.mp4?v=k5",
+    "poster": "/avatar/frustration.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "peek": {
-    "src": "/avatar/peek.mp4?v=k3",
-    "poster": "/avatar/peek.jpg?v=k3",
+    "src": "/avatar/peek.mp4?v=k5",
+    "poster": "/avatar/peek.jpg?v=k5",
     "duration": 6.042,
     "loop": false,
     "placeholder": false,
     "source": "kling"
   },
   "spin": {
-    "src": "/avatar/spin.mp4?v=k3",
-    "poster": "/avatar/spin.jpg?v=k3",
+    "src": "/avatar/spin.mp4?v=k5",
+    "poster": "/avatar/spin.jpg?v=k5",
     "duration": 8.042,
     "loop": false,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "idle_tube": {
+    "src": "/avatar/idle_tube.mp4?v=k5",
+    "poster": "/avatar/idle_tube.jpg?v=k5",
+    "duration": 5.042,
+    "loop": true,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "idle_sweater": {
+    "src": "/avatar/idle_sweater.mp4?v=k5",
+    "poster": "/avatar/idle_sweater.jpg?v=k5",
+    "duration": 5.042,
+    "loop": true,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "idle_modest": {
+    "src": "/avatar/idle_modest.mp4?v=k5",
+    "poster": "/avatar/idle_modest.jpg?v=k5",
+    "duration": 5.042,
+    "loop": true,
+    "placeholder": false,
+    "source": "kling"
+  },
+  "idle_orange": {
+    "src": "/avatar/idle_orange.mp4?v=k5",
+    "poster": "/avatar/idle_orange.jpg?v=k5",
+    "duration": 5.042,
+    "loop": true,
     "placeholder": false,
     "source": "kling"
   }
