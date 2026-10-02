@@ -99,17 +99,19 @@ export function AvatarScreen({
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-        <button
-          type="button"
-          className="avatar-fab avatar-fab-sm"
-          onClick={onSwitchToHud}
-          aria-label="Switch to HUD view"
-          title="HUD view"
-        >
-          <LayoutDashboard className="h-5 w-5" aria-hidden="true" />
-        </button>
-
-        <WardrobeButton director={director} className="avatar-fab-sm" />
+        {/* Small controls grouped bottom-left, clear of her feet; the mic stays big on the right. */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="avatar-fab avatar-fab-sm"
+            onClick={onSwitchToHud}
+            aria-label="Switch to HUD view"
+            title="HUD view"
+          >
+            <LayoutDashboard className="h-[1.1rem] w-[1.1rem]" aria-hidden="true" />
+          </button>
+          <WardrobeButton director={director} className="avatar-fab-sm" align="left" />
+        </div>
 
         <button
           type="button"

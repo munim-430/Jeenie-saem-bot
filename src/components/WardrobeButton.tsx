@@ -13,9 +13,11 @@ interface WardrobeButtonProps {
   director: AvatarDirector;
   /** Classes for the round trigger (the avatar screen and the desktop frame size it differently). */
   className?: string;
+  /** Which edge the menu lines up with, so it opens toward the middle of the screen. */
+  align?: "left" | "right";
 }
 
-export function WardrobeButton({ director, className }: WardrobeButtonProps) {
+export function WardrobeButton({ director, className, align = "left" }: WardrobeButtonProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -45,10 +47,10 @@ export function WardrobeButton({ director, className }: WardrobeButtonProps) {
         title="Wardrobe"
         data-wardrobe=""
       >
-        <Shirt className="h-5 w-5" aria-hidden="true" />
+        <Shirt className="h-[1.1rem] w-[1.1rem]" aria-hidden="true" />
       </button>
       {open ? (
-        <div className="wardrobe-menu" role="radiogroup" aria-label="Outfit">
+        <div className="wardrobe-menu" data-align={align} role="radiogroup" aria-label="Outfit">
           {OUTFITS.map((outfit) => (
             <button
               key={outfit}

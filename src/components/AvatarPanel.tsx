@@ -65,7 +65,7 @@ export function AvatarPanel({ director, recognition, voiceLevel, voiceMeasured, 
           ))}
         </div>
 
-        <WardrobeButton director={director} className="avatar-fab-sm" />
+        <WardrobeButton director={director} className="avatar-fab-sm" align="right" />
 
         <button
           type="button"
