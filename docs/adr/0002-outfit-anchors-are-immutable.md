@@ -1,11 +1,11 @@
-# ADR 0002: Outfit anchors are immutable
+# 0002 — Outfit anchors are immutable
 
 Status: accepted (2026-10-02)
 
 ## Context
 
-Jeannie can wear four outfits besides the pink suit: sweater, tube top, grey suit and orange
-two-piece. Each one is a still image of her in the NEUTRAL pose (ADR 0001) with only the clothing
+Jeannie can wear four outfits besides the pink suit: `sweater`, `tube`, `modest` and `orange`
+(the Outfit term in CONTEXT.md). Each one is a still image of her in the NEUTRAL pose (ADR 0001) with only the clothing
 changed, made by an image edit of the NEUTRAL frame:
 
 | Outfit | Anchor file | Higgsfield image job |
@@ -17,6 +17,14 @@ changed, made by an image edit of the NEUTRAL frame:
 
 Each outfit's clips are pinned to its anchor (first and last frame), the way every pink clip is
 pinned to NEUTRAL.
+
+## Relation to ADR 0001
+
+This narrows ADR 0001, it does not replace it. ADR 0001 says every avatar clip is pinned to one
+frame, NEUTRAL, and that a second anchor invalidates them all. That still holds for every clip of
+the pink suit: nothing here re-cuts or re-pins NEUTRAL. The outfit anchors are separate frames for
+separate clip sets: an outfit clip is pinned to its outfit's anchor and is never mixed with pink
+clips in one seamless cut (the app covers every cut between outfits with a sparkle).
 
 ## Decision
 

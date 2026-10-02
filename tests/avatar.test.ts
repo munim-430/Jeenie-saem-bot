@@ -297,6 +297,13 @@ describe("outfits", () => {
     expect(cueOf(back)).toMatchObject({ outfit: "modest", key: "idle@modest" });
   });
 
+  it("a change of outfit cuts a playing emote at once", () => {
+    const greeting = run([{ type: "emote", emote: "greeting" }]);
+    const sweater = run([{ type: "outfit", outfit: "sweater" }], greeting);
+    expect(sweater.playing).toBeNull();
+    expect(cueOf(sweater)).toMatchObject({ outfit: "sweater", key: "idle@sweater" });
+  });
+
   it("a change of outfit is a new cue", () => {
     const pink = cueOf(INITIAL_DIRECTOR);
     expect(cueOf(run([{ type: "outfit", outfit: "sweater" }])).key).not.toBe(pink.key);

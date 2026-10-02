@@ -546,7 +546,7 @@
   color: #fff;
 }
 
-/* Outfit change: a soft flash with a few sparkles over the 400 ms crossfade, so the swap
+/* Outfit change: a 650 ms soft flash with a few sparkles over the 400 ms crossfade, so the swap
    between two same-pose clips reads as a little magic rather than a cut. */
 .avatar-sparkle {
   position: absolute;

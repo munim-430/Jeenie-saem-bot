@@ -40,7 +40,6 @@ export function WardrobeButton({ director, className }: WardrobeButtonProps) {
         type="button"
         className={cn("avatar-fab", className)}
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="true"
         aria-expanded={open}
         aria-label={`Wardrobe: ${OUTFIT_LABELS[director.outfit]}`}
         title="Wardrobe"

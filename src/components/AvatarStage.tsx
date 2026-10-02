@@ -165,20 +165,18 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
           () => undefined,
           () => undefined,
         );
-    // The chosen outfit's idle is needed at once. The other outfits' idles are small and make the
-    // wardrobe button instant, and the idle sequence plays right after the greeting, so both come next.
-    const essential: readonly ClipName[] = [...new Set([clipOf({ emote: "idle", outfit }), ...ESSENTIAL_CLIPS])];
+    // The outfit idles are small and make the wardrobe button instant, and the idle sequence plays
+    // right after the greeting, so both come straight after the essential clips.
     const early: readonly ClipName[] = [...OUTFITS.map((o) => clipOf({ emote: "idle", outfit: o })), ...IDLE_SEQUENCE];
-    const rest = [...new Set([...early, ...CLIP_NAMES])].filter((name) => !essential.includes(name));
+    const rest = [...new Set([...early, ...CLIP_NAMES])].filter((name) => !ESSENTIAL_CLIPS.includes(name));
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
     };
-    void Promise.all(essential.map(warm)).then(() =>
+    void Promise.all(ESSENTIAL_CLIPS.map(warm)).then(() =>
       Promise.all(Array.from({ length: WARM_CONCURRENCY }, worker)),
     );
     return () => controller.abort();
-    // Once per mount: the table only changes in durations after the manifest loads, and a later
-    // outfit change streams its idle like any clip not warmed yet.
+    // Once per mount: the table only changes in durations after the manifest loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

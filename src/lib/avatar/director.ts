@@ -88,9 +88,9 @@ export function directorReducer(state: DirectorState, event: DirectorEvent): Dir
     case "outfit": {
       if (event.outfit === state.outfit) return state;
       const next = { ...state, outfit: event.outfit };
-      // The idle sequence is pink-only: leaving pink drops it for the new outfit's idle loop.
-      if (state.ambient) return start(next, state.queued);
-      return settle(next);
+      // The wardrobe acts at once: whatever one-shot is playing (an idle-sequence step or an emote)
+      // gives way to the new outfit, under the stage's sparkle; a queued emote still plays.
+      return settle(state.playing ? start(next, state.queued) : next);
     }
   }
 }

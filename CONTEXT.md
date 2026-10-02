@@ -30,7 +30,8 @@ torso: that makes Kling re-render the clothing.
 **Accept gate** — three parts, all mandatory. `scripts/avatar-clips/gate.py` measures 1 and 2 and
 writes the evidence for 3.
 
-1. **Closure**, measured against NEUTRAL, not the clip's own first frame:
+1. **Closure**, measured against the clip's anchor (NEUTRAL for pink clips, the outfit's anchor for an
+   outfit clip; `gate.py`'s 4th argument), not the clip's own first frame:
 
    | Class | Measure |
    |---|---|

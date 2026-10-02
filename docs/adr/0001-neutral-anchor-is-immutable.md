@@ -1,6 +1,6 @@
 # 0001 — The NEUTRAL anchor is immutable
 
-Status: accepted (2026-09-29)
+Status: accepted (2026-09-29); narrowed by ADR 0002 (outfit clips are pinned to their own anchor)
 
 ## Decision
 
