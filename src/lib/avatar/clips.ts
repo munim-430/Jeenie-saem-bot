@@ -44,7 +44,7 @@ export const CLIP_MANIFEST_URL = "/avatar/manifest.json";
  * Carried on every clip URL as `?v=`: a phone whose service worker still holds an older clip set
  * misses its cache and fetches the new files. Must match scripts/avatar-clips/kling.mjs.
  */
-export const CLIP_VERSION = "k4";
+export const CLIP_VERSION = "k5";
 
 /** Page backdrop behind the clips, sampled from the clip background (top edge / floor). */
 export const AVATAR_BACKDROP = "#dbc7c7";

@@ -336,15 +336,29 @@
       "n": 27,
       "id": "idle_orange",
       "class": "loop",
-      "file": "idle_orange.mp4",
+      "file": null,
       "job": "e96c8e48-1029-45ec-8cbd-190473d46666",
       "psnr": {
         "f0_vs_anchor": 37.54,
         "last_vs_anchor": 38.56,
         "f0_vs_last": 43.2
       },
+      "verdict": "superseded",
+      "note": "Outfit idle, 5 s, both ends pinned to the outfit anchor (Higgsfield image job 9b7e574e-2b46-4950-83c9-7fa6765bfa68, assets/avatar/source/outfit-orange.png). Gate measured against that anchor, not NEUTRAL; contact sheet clean. Superseded 2026-10-02 by the side-cut-out orange top (owner choice); file replaced."
+    },
+    {
+      "n": 28,
+      "id": "idle_orange",
+      "class": "loop",
+      "file": "idle_orange.mp4",
+      "job": "f1bd1790-fe6e-452d-a23b-b8eb54f0a76a",
+      "psnr": {
+        "f0_vs_anchor": 37.48,
+        "last_vs_anchor": 38.41,
+        "f0_vs_last": 43.57
+      },
       "verdict": "accept",
-      "note": "Outfit idle, 5 s, both ends pinned to the outfit anchor (Higgsfield image job 9b7e574e-2b46-4950-83c9-7fa6765bfa68, assets/avatar/source/outfit-orange.png). Gate measured against that anchor, not NEUTRAL; contact sheet clean."
+      "note": "Outfit idle, 5 s, both ends pinned to the orange anchor (Higgsfield image job e9088d81-59ca-40d9-a141-d274d5690877, assets/avatar/source/outfit-orange.png: halter crop top with side cut-outs). Gate against that anchor; contact sheet clean, cut-outs stable."
     }
   ]
 }

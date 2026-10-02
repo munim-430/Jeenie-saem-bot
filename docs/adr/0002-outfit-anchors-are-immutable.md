@@ -13,7 +13,7 @@ changed, made by an image edit of the NEUTRAL frame:
 | sweater | `assets/avatar/source/outfit-sweater.png` | `222d63f2-b0a3-4bb9-84d7-8bd59ab1789e` |
 | tube | `assets/avatar/source/outfit-tube.png` | `e062b33e-e4c7-46d2-bc0d-4de786b5d065` |
 | modest | `assets/avatar/source/outfit-modest.png` | `53b7621f-bac5-4f86-a94c-76e6b60e8d36` |
-| orange | `assets/avatar/source/outfit-orange.png` | `9b7e574e-2b46-4950-83c9-7fa6765bfa68` |
+| orange | `assets/avatar/source/outfit-orange.png` | `e9088d81-59ca-40d9-a141-d274d5690877` (supersedes `9b7e574e-…`, whose top covered the sides; replaced with its clip before release) |
 
 Each outfit's clips are pinned to its anchor (first and last frame), the way every pink clip is
 pinned to NEUTRAL.
