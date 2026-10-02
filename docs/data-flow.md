@@ -75,7 +75,7 @@ Telegram tokens) or ID numbers (passport, NID, TIN, birth registration).
 
 | Where | What |
 |---|---|
-| `localStorage` | The access key (`lib/client/api.ts`), language and voice toggles, desktop layout and view mode, last-seen time |
+| `localStorage` | The access key (`lib/client/api.ts`), language and voice toggles, desktop layout and view mode, last-seen time, chosen outfit |
 | Service worker cache `jeannie-v3` | App shell, avatar clips, icons, Next.js static files. Never `/api` responses |
 | Memory of the open tab | The chat conversation (lost on reload) |
 

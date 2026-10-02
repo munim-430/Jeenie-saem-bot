@@ -7,10 +7,11 @@ import {
   CLIP_NAMES,
   DEFAULT_CLIPS,
   ESSENTIAL_CLIPS,
-  clipNameFor,
+  OUTFITS,
+  type ClipName,
   type ClipTable,
 } from "@/lib/avatar/clips";
-import { IDLE_SEQUENCE, shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
+import { IDLE_SEQUENCE, clipOf, shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
 import { INITIAL_GATE, atRest, gateStep, nextRest } from "@/lib/avatar/voice-gate";
 import { cn } from "@/lib/utils";
 
@@ -46,18 +47,20 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
   // The cue on screen now (it may lag `cue` while a one-shot waits for idle's loop point).
   const shownCueRef = useRef<ClipCue | null>(null);
   const onEndedRef = useRef(onEnded);
+  // Bumped on every change of outfit on screen: replays the sparkle that hides the swap.
+  const [sparkle, setSparkle] = useState(0);
 
   useEffect(() => {
     onEndedRef.current = onEnded;
   });
 
-  const info = clips[clipNameFor(cue.emote)];
-  const { emote, key, loop } = cue;
+  const info = clips[clipOf(cue)];
+  const { emote, outfit, key, loop } = cue;
 
   useEffect(() => {
     const videos = [videoA.current, videoB.current] as const;
     cueKeyRef.current = key;
-    const next: ClipCue = { emote, key, loop, focus: false };
+    const next: ClipCue = { emote, outfit, key, loop, focus: false };
     let cancelled = false;
     let pauseTimer: ReturnType<typeof setTimeout> | undefined;
     let release: (() => void) | undefined;
@@ -69,6 +72,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
       const video = videos[target];
       if (!video) return;
       loadedKeys.current[target] = key;
+      if (shownCueRef.current && shownCueRef.current.outfit !== outfit) setSparkle((n) => n + 1);
       shownCueRef.current = next;
       // React only sets `muted` as a property after mount; autoplay needs it before play().
       video.muted = true;
@@ -109,7 +113,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
       clearTimeout(pauseTimer);
       release?.();
     };
-  }, [emote, key, loop, info.src, info.poster]);
+  }, [emote, outfit, key, loop, info.src, info.poster]);
 
   // Mouth rests while her voice pauses: during a silence the talking loop runs on to the next
   // frame where her mouth is closed or barely parted and holds there, then plays on when the
@@ -154,27 +158,27 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     const controller = new AbortController();
     // Read the whole body: fetch() resolves at the headers, and the limit below only
     // holds if a worker waits for the download itself.
-    const warm = (name: (typeof CLIP_NAMES)[number]) =>
+    const warm = (name: ClipName) =>
       fetch(clips[name].src, { signal: controller.signal })
         .then((res) => res.blob())
         .then(
           () => undefined,
           () => undefined,
         );
-    // The idle sequence plays right after the greeting, so its clips come first.
-    const sequence: readonly (typeof CLIP_NAMES)[number][] = IDLE_SEQUENCE;
-    const rest = [
-      ...sequence,
-      ...CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name) && !sequence.includes(name)),
-    ];
+    // The chosen outfit's idle is needed at once. The other outfits' idles are small and make the
+    // wardrobe button instant, and the idle sequence plays right after the greeting, so both come next.
+    const essential: readonly ClipName[] = [...new Set([clipOf({ emote: "idle", outfit }), ...ESSENTIAL_CLIPS])];
+    const early: readonly ClipName[] = [...OUTFITS.map((o) => clipOf({ emote: "idle", outfit: o })), ...IDLE_SEQUENCE];
+    const rest = [...new Set([...early, ...CLIP_NAMES])].filter((name) => !essential.includes(name));
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
     };
-    void Promise.all(ESSENTIAL_CLIPS.map(warm)).then(() =>
+    void Promise.all(essential.map(warm)).then(() =>
       Promise.all(Array.from({ length: WARM_CONCURRENCY }, worker)),
     );
     return () => controller.abort();
-    // Once per mount: the table only changes in durations after the manifest loads.
+    // Once per mount: the table only changes in durations after the manifest loads, and a later
+    // outfit change streams its idle like any clip not warmed yet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -237,6 +241,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
         />
       ))}
       <div className="avatar-vignette" />
+      {sparkle > 0 ? <div key={sparkle} className="avatar-sparkle" /> : null}
     </div>
   );
 }

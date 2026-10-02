@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { WardrobeButton } from "@/components/WardrobeButton";
 import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
@@ -30,7 +31,7 @@ interface AvatarScreenProps {
 
 /** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
 const VOICE_TEST_PATTERN_MS = { on: 1200, off: 800, cycles: 4 };
-const TALKING_CUE = { emote: "talking", key: "talking", loop: true, focus: false } as const;
+const TALKING_CUE = { emote: "talking", outfit: "pink", key: "talking", loop: true, focus: false } as const;
 
 export function AvatarScreen({
   director,
@@ -107,6 +108,8 @@ export function AvatarScreen({
         >
           <LayoutDashboard className="h-5 w-5" aria-hidden="true" />
         </button>
+
+        <WardrobeButton director={director} className="avatar-fab-sm" />
 
         <button
           type="button"

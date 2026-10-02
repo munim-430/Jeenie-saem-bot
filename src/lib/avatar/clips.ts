@@ -1,7 +1,7 @@
 // Avatar clip table. Mirrors public/avatar/manifest.json (written by the clip
 // pipeline) so the player works before, or without, fetching the manifest.
 
-import { EMOTES, isEmote, type Emote } from "@/lib/emote";
+import { EMOTES, type Emote } from "@/lib/emote";
 
 export interface ClipInfo {
   src: string;
@@ -15,8 +15,26 @@ export interface ClipInfo {
   rests?: number[];
 }
 
-/** Emotes that have their own clip file ("listening" is the idle loop plus a CSS focus). */
-export type ClipName = Exclude<Emote, "listening">;
+/** What she wears. Pink is the original suit with every clip; the others have an idle loop only. */
+export const OUTFITS = ["pink", "sweater", "tube", "modest", "orange"] as const;
+export type Outfit = (typeof OUTFITS)[number];
+export const OUTFIT_LABELS: Record<Outfit, string> = {
+  pink: "Pink suit",
+  sweater: "Sweater",
+  tube: "Black tube top",
+  modest: "Grey suit",
+  orange: "Orange two-piece",
+};
+
+export function isOutfit(value: unknown): value is Outfit {
+  return typeof value === "string" && (OUTFITS as readonly string[]).includes(value);
+}
+
+/** An outfit's own idle loop (pose-matched to its still, like NEUTRAL for pink). */
+export type OutfitIdleClip = `idle_${Exclude<Outfit, "pink">}`;
+
+/** Clips with their own file ("listening" is the idle loop plus a CSS focus). */
+export type ClipName = Exclude<Emote, "listening"> | OutfitIdleClip;
 
 export type ClipTable = Record<ClipName, ClipInfo>;
 
@@ -26,7 +44,7 @@ export const CLIP_MANIFEST_URL = "/avatar/manifest.json";
  * Carried on every clip URL as `?v=`: a phone whose service worker still holds an older clip set
  * misses its cache and fetches the new files. Must match scripts/avatar-clips/kling.mjs.
  */
-export const CLIP_VERSION = "k3";
+export const CLIP_VERSION = "k4";
 
 /** Page backdrop behind the clips, sampled from the clip background (top edge / floor). */
 export const AVATAR_BACKDROP = "#dbc7c7";
@@ -60,15 +78,33 @@ export const DEFAULT_CLIPS: ClipTable = {
   frustration: clip("frustration", 6.042, false, false),
   peek: clip("peek", 6.042, false, false),
   spin: clip("spin", 8.042, false, false),
+  idle_sweater: clip("idle_sweater", 5.042, true, false),
+  idle_tube: clip("idle_tube", 5.042, true, false),
+  idle_modest: clip("idle_modest", 5.042, true, false),
+  idle_orange: clip("idle_orange", 5.042, true, false),
 };
 
-export const CLIP_NAMES = EMOTES.filter((e): e is ClipName => e !== "listening");
+const OUTFIT_IDLES = OUTFITS.filter((o) => o !== "pink").map((o): OutfitIdleClip => `idle_${o}` as OutfitIdleClip);
+
+export const CLIP_NAMES: readonly ClipName[] = [
+  ...EMOTES.filter((e): e is Exclude<Emote, "listening"> => e !== "listening"),
+  ...OUTFIT_IDLES,
+];
+
+export function isClipName(value: unknown): value is ClipName {
+  return typeof value === "string" && (CLIP_NAMES as readonly string[]).includes(value);
+}
 
 /** Fetched first on load: every state the player can enter before a reply arrives. */
 export const ESSENTIAL_CLIPS: readonly ClipName[] = ["idle", "greeting", "talking"];
 
-/** The clip file an emote plays: "listening" is idle plus a CSS focus. */
-export function clipNameFor(emote: Emote): ClipName {
+/**
+ * The clip file an emote plays: "listening" is idle plus a CSS focus. In an outfit other than
+ * pink, idle, listening and talking all play that outfit's idle loop (it has no talking loop
+ * yet); one-shot emotes always play the pink clip.
+ */
+export function clipNameFor(emote: Emote, outfit: Outfit = "pink"): ClipName {
+  if (outfit !== "pink" && (emote === "idle" || emote === "listening" || emote === "talking")) return `idle_${outfit}`;
   return emote === "listening" ? "idle" : emote;
 }
 
@@ -100,7 +136,7 @@ export function mergeClipManifest(base: ClipTable, manifest: unknown): ClipTable
   if (!manifest || typeof manifest !== "object") return base;
   const next: ClipTable = { ...base };
   for (const [name, entry] of Object.entries(manifest as Record<string, unknown>)) {
-    if (!isEmote(name) || name === "listening" || !isClipInfo(entry)) continue;
+    if (!isClipName(name) || !isClipInfo(entry)) continue;
     const rests = (entry as { rests?: unknown }).rests;
     next[name] = {
       src: entry.src,

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { CloudRain, Frown, Hand, Heart, Mic, MicOff, ThumbsUp } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { WardrobeButton } from "@/components/WardrobeButton";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
@@ -63,6 +64,8 @@ export function AvatarPanel({ director, recognition, voiceLevel, voiceMeasured, 
             </button>
           ))}
         </div>
+
+        <WardrobeButton director={director} className="avatar-fab-sm" />
 
         <button
           type="button"
