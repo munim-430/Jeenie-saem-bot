@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
 import { WardrobeButton } from "@/components/WardrobeButton";
 import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
+import { INITIAL_DIRECTOR, cueOf } from "@/lib/avatar/director";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +32,6 @@ interface AvatarScreenProps {
 
 /** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
 const VOICE_TEST_PATTERN_MS = { on: 1200, off: 800, cycles: 4 };
-const TALKING_CUE = { emote: "talking", outfit: "pink", key: "talking", loop: true, focus: false } as const;
 
 export function AvatarScreen({
   director,
@@ -48,6 +48,8 @@ export function AvatarScreen({
   // Preview-only QA: plays talking against a scripted voice level so the mouth rests can be
   // checked on a phone without waiting for a real spoken reply.
   const [voiceTest, setVoiceTest] = useState(false);
+  // The talking loop of the outfit she is wearing.
+  const talkingCue = useMemo(() => cueOf({ ...INITIAL_DIRECTOR, base: "talking", outfit: director.outfit }), [director.outfit]);
   const voiceTestStart = useRef(0);
   const startVoiceTest = useCallback(() => {
     voiceTestStart.current = performance.now();
@@ -78,7 +80,7 @@ export function AvatarScreen({
     <div className="avatar-screen fixed inset-0 z-20 overflow-hidden">
       <AvatarStage
         className="absolute inset-0"
-        cue={voiceTest ? TALKING_CUE : director.cue}
+        cue={voiceTest ? talkingCue : director.cue}
         clips={director.clips}
         onEnded={director.ended}
         voiceLevel={voiceTest ? testLevel : voiceLevel}

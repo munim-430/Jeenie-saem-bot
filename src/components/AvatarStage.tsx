@@ -118,10 +118,11 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
   // Mouth rests while her voice pauses: during a silence the talking loop runs on to the next
   // frame where her mouth is closed or barely parted and holds there, then plays on when the
   // voice comes back. Only with a measured level; the synthetic one would gate on noise.
-  const rests = clips.talking.rests;
-  const talkingShown = emote === "talking";
+  // Every outfit's talking loop carries its own rests.
+  const rests = emote === "talking" ? info.rests : undefined;
+  const talkingKey = emote === "talking" ? key : null;
   useEffect(() => {
-    if (!talkingShown || !voiceMeasured || !voiceLevel || !rests?.length) return;
+    if (!talkingKey || !voiceMeasured || !voiceLevel || !rests?.length) return;
     let raf = 0;
     let gate = INITIAL_GATE;
     let rest: number | null = null;
@@ -129,7 +130,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     const tick = () => {
       gate = gateStep(gate, voiceLevel(), performance.now());
       const video = (frontRef.current === 0 ? videoA : videoB).current;
-      if (video && shownCueRef.current?.key === "talking") {
+      if (video && shownCueRef.current?.key === talkingKey) {
         if (gate.silent && !video.paused) {
           rest ??= nextRest(rests, video.currentTime);
           if (rest !== null && atRest(video.currentTime, rest)) {
@@ -149,7 +150,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     raf = requestAnimationFrame(tick);
     // Leaving talking mid-rest needs nothing: the next talking cue restarts the clip.
     return () => cancelAnimationFrame(raf);
-  }, [talkingShown, voiceMeasured, voiceLevel, rests]);
+  }, [talkingKey, voiceMeasured, voiceLevel, rests]);
 
   // Warm the HTTP / service-worker cache so later clips start instantly: the clips
   // every state needs first, then the idle sequence and the rest a couple at a time so a phone on mobile
@@ -166,8 +167,13 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
           () => undefined,
         );
     // The outfit idles are small and make the wardrobe button instant, and the idle sequence plays
-    // right after the greeting, so both come straight after the essential clips.
-    const early: readonly ClipName[] = [...OUTFITS.map((o) => clipOf({ emote: "idle", outfit: o })), ...IDLE_SEQUENCE];
+    // right after the greeting, so both come straight after the essential clips; the outfit
+    // talking loops follow, before the rest of the emotes.
+    const early: readonly ClipName[] = [
+      ...OUTFITS.map((o) => clipOf({ emote: "idle", outfit: o })),
+      ...IDLE_SEQUENCE,
+      ...OUTFITS.map((o) => clipOf({ emote: "talking", outfit: o })),
+    ];
     const rest = [...new Set([...early, ...CLIP_NAMES])].filter((name) => !ESSENTIAL_CLIPS.includes(name));
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
