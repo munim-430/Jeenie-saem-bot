@@ -175,8 +175,9 @@ describe("avatar clips", () => {
   it("listening reuses the idle clip; every other emote has its own, in the table and the manifest", () => {
     expect(clipNameFor("listening")).toBe("idle");
     expect(clipNameFor("love")).toBe("love");
-    const outfitIdles = OUTFITS.filter((o) => o !== "pink").map((o) => `idle_${o}`);
-    const clipEmotes = [...EMOTES.filter((e) => e !== "listening"), ...outfitIdles];
+    const dressed = OUTFITS.filter((o) => o !== "pink");
+    const outfitLoops = dressed.flatMap((o) => [`idle_${o}`, `talking_${o}`]);
+    const clipEmotes = [...EMOTES.filter((e) => e !== "listening"), ...outfitLoops];
     expect([...CLIP_NAMES].sort()).toEqual([...clipEmotes].sort());
     for (const name of CLIP_NAMES) {
       expect(DEFAULT_CLIPS[name].src).toMatch(new RegExp(`^/avatar/${name}\\.mp4(\\?v=${CLIP_VERSION})?$`));
@@ -193,9 +194,22 @@ describe("avatar clips", () => {
     }
   });
 
-  it("loops idle, talking and the outfit idles; the essential clips cover every state before a reply", () => {
+  it("loops idle, talking and the outfit idle and talking loops; the essential clips cover every state before a reply", () => {
     const loops = CLIP_NAMES.filter((e) => DEFAULT_CLIPS[e].loop).sort();
-    expect(loops).toEqual(["idle", "idle_modest", "idle_orange", "idle_sweater", "idle_tube", "talking"]);
+    expect(loops).toEqual(
+      [
+        "idle",
+        "idle_modest",
+        "idle_orange",
+        "idle_sweater",
+        "idle_tube",
+        "talking",
+        "talking_modest",
+        "talking_orange",
+        "talking_sweater",
+        "talking_tube",
+      ].sort(),
+    );
     expect([...ESSENTIAL_CLIPS].sort()).toEqual(["greeting", "idle", "talking"]);
   });
 
@@ -244,6 +258,17 @@ describe("avatar clips", () => {
     expect(rests.at(-1)).toBeLessThan(manifest.talking.duration);
   });
 
+  it("ships mouth rests for every outfit's talking loop", () => {
+    const merged = mergeClipManifest(DEFAULT_CLIPS, manifest);
+    for (const outfit of OUTFITS.filter((o) => o !== "pink")) {
+      const name = clipNameFor("talking", outfit);
+      const rests = merged[name].rests ?? [];
+      expect({ name, enough: rests.length > 10, first: rests[0] }).toEqual({ name, enough: true, first: 0 });
+      // These loops talk almost without a break, so a pause can wait a little longer for a closed mouth.
+      for (let i = 1; i < rests.length; i++) expect(rests[i]! - rests[i - 1]!).toBeLessThanOrEqual(2.5);
+    }
+  });
+
   it("keeps valid rests and drops junk ones", () => {
     const talking = { src: "/avatar/talking.mp4", poster: "/avatar/talking.jpg", duration: 2, loop: true };
     expect(mergeClipManifest(DEFAULT_CLIPS, { talking: { ...talking, rests: [0, 0.5, 1.5] } }).talking.rests).toEqual([
@@ -261,13 +286,16 @@ describe("outfits", () => {
     return run([{ type: "ended", seq: state.seq }], state);
   };
 
-  it("routes idle, listening and talking to the outfit's idle loop; emotes stay pink", () => {
+  it("routes idle and listening to the outfit's idle loop and talking to its talking loop; emotes stay pink", () => {
     expect(clipNameFor("idle", "orange")).toBe("idle_orange");
     expect(clipNameFor("listening", "tube")).toBe("idle_tube");
-    expect(clipNameFor("talking", "modest")).toBe("idle_modest");
+    expect(clipNameFor("talking", "modest")).toBe("talking_modest");
     expect(clipNameFor("love", "sweater")).toBe("love");
     expect(clipNameFor("talking")).toBe("talking");
-    for (const outfit of OUTFITS) expect(DEFAULT_CLIPS[clipNameFor("idle", outfit)]).toBeDefined();
+    for (const outfit of OUTFITS) {
+      expect(DEFAULT_CLIPS[clipNameFor("idle", outfit)]).toBeDefined();
+      expect(DEFAULT_CLIPS[clipNameFor("talking", outfit)]).toBeDefined();
+    }
   });
 
   it("plays the idle sequence only in pink: another outfit loops its own idle", () => {
@@ -280,11 +308,14 @@ describe("outfits", () => {
     expect(run([{ type: "outfit", outfit: "pink" }], orange).playing).toBe("playful");
   });
 
-  it("keeps one loop through talking in another outfit (no restart, no mouth gate)", () => {
+  it("talks in the outfit's own talking loop, and listening keeps the idle loop", () => {
     const tube = run([{ type: "outfit", outfit: "tube" }]);
     const talking = run([{ type: "base", base: "talking" }], tube);
-    expect(cueOf(talking).key).toBe(cueOf(tube).key);
-    expect(clipOf(cueOf(talking))).toBe("idle_tube");
+    expect(cueOf(talking)).toMatchObject({ emote: "talking", outfit: "tube", key: "talking@tube", loop: true });
+    expect(clipOf(cueOf(talking))).toBe("talking_tube");
+    expect(shouldDeferCue(cueOf(tube), cueOf(talking))).toBe(false);
+    const listening = run([{ type: "base", base: "listening" }], tube);
+    expect(cueOf(listening).key).toBe(cueOf(tube).key);
   });
 
   it("plays an emote in pink, then hands back to the outfit", () => {
@@ -353,6 +384,10 @@ describe("Kling ingest", () => {
         "idle_sweater",
         "idle_tube",
         "love",
+        "talking_modest",
+        "talking_orange",
+        "talking_sweater",
+        "talking_tube",
         "peek",
         "playful",
         "sadness",

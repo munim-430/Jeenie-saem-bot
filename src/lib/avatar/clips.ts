@@ -11,11 +11,11 @@ export interface ClipInfo {
   loop: boolean;
   /** Built from frame sheets until the generated clip lands. */
   placeholder: boolean;
-  /** Talking only: times (s) where her mouth is closed or barely parted, to rest on during silence. */
+  /** Talking loops only: times (s) where her mouth is closed or barely parted, to rest on during silence. */
   rests?: number[];
 }
 
-/** What she wears. Pink is the original suit with every clip; the others have an idle loop only. */
+/** What she wears. Pink is the original suit with every clip; the others have an idle and a talking loop. */
 export const OUTFITS = ["pink", "sweater", "tube", "modest", "orange"] as const;
 export type Outfit = (typeof OUTFITS)[number];
 export const OUTFIT_LABELS: Record<Outfit, string> = {
@@ -32,9 +32,11 @@ export function isOutfit(value: unknown): value is Outfit {
 
 /** An outfit's own idle loop (pose-matched to its still, like NEUTRAL for pink). */
 export type OutfitIdleClip = `idle_${Exclude<Outfit, "pink">}`;
+/** An outfit's own talking loop, pinned to the same still as its idle. */
+export type OutfitTalkingClip = `talking_${Exclude<Outfit, "pink">}`;
 
 /** Clips with their own file ("listening" is the idle loop plus a CSS focus). */
-export type ClipName = Exclude<Emote, "listening"> | OutfitIdleClip;
+export type ClipName = Exclude<Emote, "listening"> | OutfitIdleClip | OutfitTalkingClip;
 
 export type ClipTable = Record<ClipName, ClipInfo>;
 
@@ -44,7 +46,7 @@ export const CLIP_MANIFEST_URL = "/avatar/manifest.json";
  * Carried on every clip URL as `?v=`: a phone whose service worker still holds an older clip set
  * misses its cache and fetches the new files. Must match scripts/avatar-clips/kling.mjs.
  */
-export const CLIP_VERSION = "k5";
+export const CLIP_VERSION = "k6";
 
 /** Page backdrop behind the clips, sampled from the clip background (top edge / floor). */
 export const AVATAR_BACKDROP = "#dbc7c7";
@@ -82,13 +84,18 @@ export const DEFAULT_CLIPS: ClipTable = {
   idle_tube: clip("idle_tube", 5.042, true, false),
   idle_modest: clip("idle_modest", 5.042, true, false),
   idle_orange: clip("idle_orange", 5.042, true, false),
+  talking_sweater: clip("talking_sweater", 5.042, true, false),
+  talking_tube: clip("talking_tube", 5.042, true, false),
+  talking_modest: clip("talking_modest", 5.042, true, false),
+  talking_orange: clip("talking_orange", 5.042, true, false),
 };
 
-const OUTFIT_IDLES = OUTFITS.filter((o) => o !== "pink").map((o): OutfitIdleClip => `idle_${o}` as OutfitIdleClip);
+const DRESSED = OUTFITS.filter((o): o is Exclude<Outfit, "pink"> => o !== "pink");
 
 export const CLIP_NAMES: readonly ClipName[] = [
   ...EMOTES.filter((e): e is Exclude<Emote, "listening"> => e !== "listening"),
-  ...OUTFIT_IDLES,
+  ...DRESSED.map((o): OutfitIdleClip => `idle_${o}`),
+  ...DRESSED.map((o): OutfitTalkingClip => `talking_${o}`),
 ];
 
 export function isClipName(value: unknown): value is ClipName {
@@ -100,11 +107,14 @@ export const ESSENTIAL_CLIPS: readonly ClipName[] = ["idle", "greeting", "talkin
 
 /**
  * The clip file an emote plays: "listening" is idle plus a CSS focus. In an outfit other than
- * pink, idle, listening and talking all play that outfit's idle loop (it has no talking loop
- * yet); one-shot emotes always play the pink clip.
+ * pink, idle and listening play that outfit's idle loop and talking its talking loop; one-shot
+ * emotes always play the pink clip.
  */
 export function clipNameFor(emote: Emote, outfit: Outfit = "pink"): ClipName {
-  if (outfit !== "pink" && (emote === "idle" || emote === "listening" || emote === "talking")) return `idle_${outfit}`;
+  if (outfit !== "pink") {
+    if (emote === "talking") return `talking_${outfit}`;
+    if (emote === "idle" || emote === "listening") return `idle_${outfit}`;
+  }
   return emote === "listening" ? "idle" : emote;
 }
 

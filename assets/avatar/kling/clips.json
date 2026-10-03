@@ -359,6 +359,62 @@
       },
       "verdict": "accept",
       "note": "Outfit idle, 5 s, both ends pinned to the orange anchor (Higgsfield image job e9088d81-59ca-40d9-a141-d274d5690877, assets/avatar/source/outfit-orange.png: halter crop top with side cut-outs). Gate against that anchor; contact sheet clean, cut-outs stable."
+    },
+    {
+      "n": 29,
+      "id": "talking_sweater",
+      "class": "loop",
+      "file": "talking_sweater.mp4",
+      "job": "9d0630a6-1b1f-4215-b316-d8c9c4e96da5",
+      "psnr": {
+        "f0_vs_anchor": 36.61,
+        "last_vs_anchor": 37.78,
+        "f0_vs_last": 43.18
+      },
+      "verdict": "accept",
+      "note": "Outfit talking loop, 5 s, both ends pinned to the sweater anchor (Higgsfield image job 222d63f2-b0a3-4bb9-84d7-8bd59ab1789e, assets/avatar/source/outfit-sweater.png). Talks ~0.4-4.2 s. Gate against that anchor; contact sheet clean."
+    },
+    {
+      "n": 30,
+      "id": "talking_tube",
+      "class": "loop",
+      "file": "talking_tube.mp4",
+      "job": "064c6cf8-4ca8-434b-a2a8-bd2f853e642f",
+      "psnr": {
+        "f0_vs_anchor": 36.23,
+        "last_vs_anchor": 36.56,
+        "f0_vs_last": 45.29
+      },
+      "verdict": "accept",
+      "note": "Outfit talking loop, 5 s, both ends pinned to the tube anchor (Higgsfield image job e062b33e-e4c7-46d2-bc0d-4de786b5d065, assets/avatar/source/outfit-tube.png). Talks ~0.4-4.2 s. Gate against that anchor; contact sheet clean."
+    },
+    {
+      "n": 31,
+      "id": "talking_modest",
+      "class": "loop",
+      "file": "talking_modest.mp4",
+      "job": "dfc74c22-0bd8-41b2-90a5-316e3a178646",
+      "psnr": {
+        "f0_vs_anchor": 37.1,
+        "last_vs_anchor": 37.4,
+        "f0_vs_last": 45.9
+      },
+      "verdict": "accept",
+      "note": "Outfit talking loop, 5 s, both ends pinned to the modest anchor (Higgsfield image job 53b7621f-bac5-4f86-a94c-76e6b60e8d36, assets/avatar/source/outfit-modest.png). Talks ~0.4-4.2 s. Gate against that anchor; contact sheet clean."
+    },
+    {
+      "n": 32,
+      "id": "talking_orange",
+      "class": "loop",
+      "file": "talking_orange.mp4",
+      "job": "102e98c0-3318-4e8c-ad62-c6bf354013df",
+      "psnr": {
+        "f0_vs_anchor": 37.49,
+        "last_vs_anchor": 38.44,
+        "f0_vs_last": 43.25
+      },
+      "verdict": "accept",
+      "note": "Outfit talking loop, 5 s, both ends pinned to the orange anchor (Higgsfield image job e9088d81-59ca-40d9-a141-d274d5690877, assets/avatar/source/outfit-orange.png). Talks ~0.4-4.2 s. Gate against that anchor; contact sheet clean."
     }
   ]
 }

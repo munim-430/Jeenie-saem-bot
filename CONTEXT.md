@@ -18,9 +18,9 @@ shyness → heartbeat → sway, then again. Each step hands over on its last (NE
 the mic drops the current step at once; a reply emote waits for the step to end.
 
 **Outfit** — what she wears: `pink` (the suit, every clip), `sweater`, `tube`, `modest`, `orange`.
-Each non-pink outfit has an anchor still (the NEUTRAL pose, clothing changed; ADR 0002) and, for now,
-one idle loop pinned to it. In another outfit, idle, listening and talking all play that loop; a
-reply emote plays the pink clip, then hands back. The idle sequence runs only in pink. A change of
+Each non-pink outfit has an anchor still (the NEUTRAL pose, clothing changed; ADR 0002) and two loops
+pinned to it: idle (also under listening) and talking, with its own mouth rests. A reply emote plays
+the pink clip, then hands back. The idle sequence runs only in pink. A change of
 outfit cuts at once under a sparkle. Chosen with the wardrobe button; kept in `localStorage` only.
 
 **Carrier** — the gross body motion that makes an emote read at phone size (lean, weight shift, nod,

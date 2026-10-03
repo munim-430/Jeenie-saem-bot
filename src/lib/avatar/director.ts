@@ -3,8 +3,8 @@
 // over it and hand back. At most one emote waits behind the one playing.
 // While idle she plays the idle sequence back-to-back; the plain idle clip only
 // shows before the first clip (the greeting) and under listening. In any outfit
-// other than the pink suit she loops that outfit's idle instead (idle, listening
-// and talking alike), and one-shot emotes play in the pink suit, then hand back.
+// other than the pink suit she loops that outfit's idle instead (idle and listening)
+// or its talking loop, and one-shot emotes play in the pink suit, then hand back.
 
 import { clipNameFor, type ClipName, type Outfit } from "@/lib/avatar/clips";
 import type { Emote, OneShotEmote, ReplyEmote } from "@/lib/emote";
@@ -111,8 +111,9 @@ export function cueOf(state: DirectorState): ClipCue {
   const focus = state.base === "listening";
   if (state.playing) return { emote: state.playing, outfit: "pink", key: `${state.playing}#${state.seq}`, loop: false, focus };
   const emote: Emote = state.base;
-  // Every base state shares one loop in another outfit, so talking never restarts it.
-  const key = state.outfit !== "pink" ? `idle@${state.outfit}` : state.base === "talking" ? "talking" : "idle";
+  // Listening shares idle's loop; talking has its own in every outfit.
+  const loopName = state.base === "talking" ? "talking" : "idle";
+  const key = state.outfit === "pink" ? loopName : `${loopName}@${state.outfit}`;
   return { emote, outfit: state.outfit, key, loop: true, focus };
 }
 

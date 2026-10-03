@@ -23,6 +23,11 @@ export const KLING_NAMES = {
   idle_tube: "idle_tube",
   idle_modest: "idle_modest",
   idle_orange: "idle_orange",
+  // Outfit talking loops: pinned to the same outfit anchor as the idle.
+  talking_sweater: "talking_sweater",
+  talking_tube: "talking_tube",
+  talking_modest: "talking_modest",
+  talking_orange: "talking_orange",
 };
 
 /**
@@ -30,10 +35,14 @@ export const KLING_NAMES = {
  * service worker still holds the previous set fetches the new files on the first open.
  * Must match CLIP_VERSION in src/lib/avatar/clips.ts (a test checks both).
  */
-export const CLIP_VERSION = "k5";
+export const CLIP_VERSION = "k6";
 
 /** Clips the player loops while their state lasts (sway is played one cycle at a time). */
-const LOOPS = new Set(["idle", "talking", "idle_sweater", "idle_tube", "idle_modest", "idle_orange"]);
+const LOOPS = new Set([
+  "idle",
+  "talking",
+  ...["sweater", "tube", "modest", "orange"].flatMap((o) => [`idle_${o}`, `talking_${o}`]),
+]);
 
 /**
  * @param {{ clips: { id: string, file: string | null, verdict: string }[] }} clipsJson
