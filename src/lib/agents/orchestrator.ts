@@ -10,17 +10,13 @@
 import { generateText, isStepCount, streamText, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { ownSignal } from "../abort";
 import { getEnv } from "../env";
+import { answerHangeul } from "../hangeul/respond";
+import { isHangeulContextQuery } from "../hangeul/router";
+import { createHangeulStore, hangeulConfigured } from "../hangeul/store";
+import type { AnswerSource, HangeulReaders } from "../hangeul/types";
 import { recallMemory } from "../memory/store";
 import type { AgentId, ChatMessage, Honorific, LangMode, LlmProvider, ResolvedLang, SourceLink } from "../types";
 import { resolveLanguage, truncate } from "../utils";
-import {
-  formatHangeulReport,
-  formatHangeulStatus,
-  getHangeulReport,
-  getHangeulStatus,
-  isHangeulQuery,
-  isHangeulStatusQuery,
-} from "./hangeul-bridge";
 import {
   approvalRequestFooter,
   executionConfirmation,
@@ -96,8 +92,9 @@ export function routeQuery(input: {
   const previous = input.previous ?? [];
   const lang = resolveLanguage(input.lang, input.text, previous);
   if (!input.hasImage && isMistakeAudit(input.text)) return { agent: "audit", lang, reason: "mistake audit request" };
-  if (isHangeulQuery(input.text) && (!input.hasImage || portalOverImage(input.text))) {
-    return { agent: "hangeul", lang, reason: "Hangeul admin portal request" };
+  // Before the clock and search rules: "how many consultancies were closed today?" is the agency's data, not the web's.
+  if (isHangeulContextQuery(input.text) && (!input.hasImage || portalOverImage(input.text))) {
+    return { agent: "hangeul", lang, reason: "Hangeul data question" };
   }
   if (input.hasImage) return { agent: "vision", lang, reason: "image attached" };
   // The core agent's time tools answer these exactly; a web search would not.
@@ -125,8 +122,25 @@ export function offlineMessage(lang: ResolvedLang, kind: "text" | "vision" = "te
   }
   return localized(
     lang,
-    "I'm running in offline mode: no language model is connected. Set DEEPSEEK_API_KEY (or OPENAI_API_KEY, or OLLAMA_BASE_URL for a local model) and I'll be fully online. Smart-home commands, live search and Hangeul reports still work.",
-    "지금은 오프라인 모드예요. 연결된 언어 모델이 없어요. DEEPSEEK_API_KEY(또는 OPENAI_API_KEY, 로컬 모델은 OLLAMA_BASE_URL)를 설정해 주시면 바로 온라인으로 전환할게요. 스마트홈 명령, 실시간 검색, 한글 리포트는 계속 사용할 수 있어요.",
+    "I'm running in offline mode: no language model is connected. Set DEEPSEEK_API_KEY (or OPENAI_API_KEY, or OLLAMA_BASE_URL for a local model) and I'll be fully online. Smart-home commands, live search and Hangeul data answers still work.",
+    "지금은 오프라인 모드예요. 연결된 언어 모델이 없어요. DEEPSEEK_API_KEY(또는 OPENAI_API_KEY, 로컬 모델은 OLLAMA_BASE_URL)를 설정해 주시면 바로 온라인으로 전환할게요. 스마트홈 명령, 실시간 검색, 한글 자료 답변은 계속 사용할 수 있어요.",
+  );
+}
+
+/** Hangeul data holds full student records (D2), so it is only for callers that proved a secret. */
+export function hangeulNeedsKeyLine(lang: ResolvedLang): string {
+  return localized(
+    lang,
+    "The Hangeul data holds full student records, so I only share it with the access key. Enter your Jeannie access key (or ask in the Telegram admin chat) and I'll answer.",
+    "한글 자료에는 학생 정보 전체가 들어 있어서 접근 키가 있을 때만 알려드려요. Jeannie 접근 키를 입력하시거나 텔레그램 관리자 채팅에서 물어봐 주세요.",
+  );
+}
+
+function hangeulNotConfiguredLine(lang: ResolvedLang): string {
+  return localized(
+    lang,
+    "The Hangeul data isn't connected: set SUPABASE_URL and SUPABASE_SECRET_KEY (the project Hangeul BOT publishes to) and ask again.",
+    "한글 자료가 연결되어 있지 않아요. Hangeul BOT이 자료를 올리는 프로젝트의 SUPABASE_URL과 SUPABASE_SECRET_KEY를 설정한 뒤 다시 물어봐 주세요.",
   );
 }
 
@@ -340,8 +354,20 @@ export interface OrchestratorInput {
 }
 
 export interface OrchestratorContext {
-  /** Caller proved a configured secret; unlocks live Hangeul data. */
+  /** Caller proved a configured secret; unlocks memory, and the Hangeul data unless `hangeulAccess` says otherwise. */
   trusted: boolean;
+  /**
+   * Caller may read the Hangeul data (full student records): the HUD presenting the configured
+   * JEANNIE_ACCESS_KEY, or the Telegram admin chat. Defaults to `trusted`. The chat route sets it from the
+   * access key alone, so the cron bearer never unlocks student data (spec D8: the one access key).
+   */
+  hangeulAccess?: boolean;
+  /** Hangeul data readers override (tests, the device copy); defaults to the Supabase store. */
+  hangeul?: HangeulReaders;
+  /** What the PWA computed for a Hangeul question: its vector and/or its own search hits. */
+  hangeulDevice?: { embedding?: readonly number[] | null; hits?: readonly AnswerSource[] | null } | null;
+  /** Clock override (tests): "today" for the Hangeul answers. */
+  now?: Date;
   signal?: AbortSignal | null;
   /** Test override for the language model (used for every LLM agent). */
   model?: LanguageModel;
@@ -395,26 +421,32 @@ function fixed(
   return { agent, lang, provider: "none", honorific, sources, stream: textStreamOf(text) };
 }
 
+/**
+ * Hangeul data answers (spec D11): code builds every figure from the rows Hangeul
+ * BOT published; the model only writes up to two sentences around them, which
+ * must pass the number check first, so the reply is sent whole, not streamed.
+ */
 async function runHangeul(turn: Turn): Promise<OrchestratorResult> {
-  const bridge = { trusted: turn.ctx.trusted, signal: turn.ctx.signal };
-  const wantsStatus = isHangeulStatusQuery(turn.text);
-  const data = wantsStatus ? await getHangeulStatus(bridge) : await getHangeulReport(bridge);
-  const plain = "metrics" in data ? formatHangeulReport(data, turn.lang) : formatHangeulStatus(data, turn.lang);
+  if (!(turn.ctx.hangeulAccess ?? turn.ctx.trusted)) return fixed("hangeul", turn.lang, turn.honorific, hangeulNeedsKeyLine(turn.lang));
+  const readers = turn.ctx.hangeul ?? (hangeulConfigured() ? createHangeulStore({ signal: turn.ctx.signal }) : null);
+  if (!readers) return fixed("hangeul", turn.lang, turn.honorific, hangeulNotConfiguredLine(turn.lang));
 
   const resolved = resolveModel("text", turn.ctx);
-  if (!resolved) return fixed("hangeul", turn.lang, turn.honorific, plain);
-
-  const context = `Hangeul portal ${wantsStatus ? "status check" : "report"} (JSON):\n${JSON.stringify(data, null, 2)}`;
   const memory = await turn.memory;
-  const stream = llmStream({
-    resolved,
-    system: buildSystemPrompt({ agent: "hangeul", lang: turn.lang, honorific: turn.honorific, memory, context }),
-    messages: toModelMessages(turn.history, { lang: turn.lang }),
+  const answer = await answerHangeul({
+    question: turn.text,
     lang: turn.lang,
+    readers,
+    now: turn.ctx.now ?? new Date(),
+    timeZone: getEnv().timeZone,
+    honorific: turn.honorific,
+    messages: resolved ? toModelMessages(turn.history, { lang: turn.lang }) : undefined,
+    memory,
+    model: resolved,
+    device: turn.ctx.hangeulDevice,
     signal: turn.ctx.signal,
-    fallbackText: plain,
   });
-  return { agent: "hangeul", lang: turn.lang, provider: resolved.provider, honorific: turn.honorific, sources: [], stream };
+  return { agent: "hangeul", lang: turn.lang, provider: answer.provider, honorific: turn.honorific, sources: [], stream: textStreamOf(answer.text) };
 }
 
 // "What's the population there?" may lean on the conversation without being short.

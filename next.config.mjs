@@ -15,6 +15,12 @@ const nextConfig = {
   // Which deployment this build is for (Vercel sets VERCEL_ENV at build time): gates the
   // preview-only emote picker so it can never render on production.
   env: { NEXT_PUBLIC_DEPLOY_ENV: process.env.VERCEL_ENV || "local" },
+  // transformers.js (the device's question embedder, a Web Worker) runs on WASM in the
+  // browser; its Node-only backends must never be bundled.
+  webpack(config) {
+    config.resolve.alias = { ...config.resolve.alias, "sharp$": false, "onnxruntime-node$": false };
+    return config;
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

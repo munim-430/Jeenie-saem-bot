@@ -124,8 +124,8 @@ export function HudHeader({
         },
         {
           label: "HANGEUL",
-          value: status.hangeul.mode.toUpperCase(),
-          state: status.hangeul.mode === "live" ? ("on" as const) : ("warn" as const),
+          value: status.hangeul.configured ? "DATA" : "OFF",
+          state: status.hangeul.configured ? ("on" as const) : ("off" as const),
         },
       ]
     : [

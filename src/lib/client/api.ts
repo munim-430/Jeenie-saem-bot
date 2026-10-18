@@ -10,7 +10,7 @@ import {
   type AgentId,
   type ApiError,
   type ChatRequestBody,
-  type HangeulStatus,
+  type HangeulDataStatus,
   type LlmProvider,
   type MemoryDocument,
   type ResolvedLang,
@@ -20,7 +20,10 @@ import {
   type TtsEngine,
   type TtsRequestBody,
 } from "@/lib/types";
+import type { ChangesPage, SnapshotPage } from "@/lib/hangeul/store";
+import type { HgRun } from "@/lib/hangeul/types";
 import { decodeHeaderJson } from "@/lib/utils";
+import { isUnreachable } from "./reachability";
 
 const ACCESS_KEY_STORAGE = "jeannie.accessKey";
 
@@ -28,6 +31,8 @@ const STATUS_TIMEOUT_MS = 8_000;
 const CHAT_TIMEOUT_MS = 180_000; // covers the whole streamed answer, not just the headers
 const TTS_TIMEOUT_MS = 30_000;
 const HANGEUL_TIMEOUT_MS = 15_000;
+const HANGEUL_SYNC_TIMEOUT_MS = 60_000;
+const HANGEUL_CHANGES_LIMIT = 200;
 const MEMORY_TIMEOUT_MS = 30_000;
 
 // ── Access key storage ───────────────────────────────────────────────────────
@@ -113,6 +118,31 @@ async function errorFromResponse(res: Response): Promise<ApiRequestError> {
   return new ApiRequestError(res.status, code, message);
 }
 
+// ── Reachability ────────────────────────────────────────────────────────────
+// Every request reports whether it reached the server, so the offline banner
+// (useOnlineStatus) knows without polling while things work.
+
+type ReachabilityListener = (reachable: boolean) => void;
+
+const reachabilityListeners = new Set<ReachabilityListener>();
+
+/** Called with false when a request could not reach the server at all, true when one got any answer. */
+export function onReachability(listener: ReachabilityListener): () => void {
+  reachabilityListeners.add(listener);
+  return () => {
+    reachabilityListeners.delete(listener);
+  };
+}
+
+function reportReachability(reachable: boolean): void {
+  for (const listener of reachabilityListeners) listener(reachable);
+}
+
+function reportFailure(error: unknown): unknown {
+  if (isUnreachable(error)) reportReachability(false);
+  return error;
+}
+
 // ── Fetch core ──────────────────────────────────────────────────────────────
 
 /** Combines the caller's signal with a timeout. AbortSignal.any is missing in older Safari. */
@@ -154,8 +184,10 @@ async function request(
       cache: "no-store",
     });
   } catch (error) {
-    throw normalizeFetchError(error, init.signal);
+    throw reportFailure(normalizeFetchError(error, init.signal));
   }
+  // Any HTTP answer, even an error, means the server was reached.
+  reportReachability(true);
   if (!res.ok) throw await errorFromResponse(res);
   return res;
 }
@@ -293,7 +325,7 @@ async function* readTextStream(stream: ReadableStream<Uint8Array>, signal?: Abor
       try {
         result = await reader.read();
       } catch (error) {
-        throw normalizeFetchError(error, signal);
+        throw reportFailure(normalizeFetchError(error, signal));
       }
       if (result.done) break;
       const text = decoder.decode(result.value, { stream: true });
@@ -329,15 +361,50 @@ export async function requestSpeech(payload: TtsRequestBody, signal?: AbortSigna
   return { audio, engine };
 }
 
-// ── Hangeul bridge ─────────────────────────────────────────────────────────
+// ── Hangeul data ───────────────────────────────────────────────────────────
 
-export async function fetchHangeulStatus(signal?: AbortSignal): Promise<HangeulStatus> {
-  const res = await request("/api/hangeul?action=status", { signal, timeoutMs: HANGEUL_TIMEOUT_MS });
+// The device copy (ticket 7). Pages are ~3 MB, a few seconds each on a phone.
+
+async function hangeulJson<T>(path: string, what: string, signal: AbortSignal | undefined, valid: (body: T) => boolean): Promise<T> {
+  const res = await request(path, { signal, timeoutMs: HANGEUL_SYNC_TIMEOUT_MS });
+  let body: T;
   try {
-    const data = (await res.json()) as { status?: HangeulStatus };
-    if (!data.status) throw new Error("missing status");
-    return data.status;
+    body = (await res.json()) as T;
+  } catch (error) {
+    // Malformed JSON, or the body stopped arriving (dropped connection, timeout, abort).
+    if (error instanceof SyntaxError) throw new ApiRequestError(res.status, "invalid_response", `${what} returned malformed data.`);
+    throw reportFailure(normalizeFetchError(error, signal));
+  }
+  if (!body || !valid(body)) throw new ApiRequestError(res.status, "invalid_response", `${what} returned malformed data.`);
+  return body;
+}
+
+/** GET /api/hangeul/snapshot (first page) or ?cursor=<next>: one page of the full dump. */
+export function fetchHangeulSnapshot(cursor: string | null, signal?: AbortSignal): Promise<SnapshotPage> {
+  const path = cursor ? `/api/hangeul/snapshot?cursor=${encodeURIComponent(cursor)}` : "/api/hangeul/snapshot";
+  return hangeulJson<SnapshotPage>(path, "The Hangeul snapshot", signal, (b) => Array.isArray(b.records) && Array.isArray(b.chunks));
+}
+
+/** GET /api/hangeul/changes?since=<seq>: the change log after the device's cursor. */
+export function fetchHangeulChanges(since: number, signal?: AbortSignal): Promise<ChangesPage> {
+  const path = `/api/hangeul/changes?since=${Math.max(0, Math.trunc(since))}&limit=${HANGEUL_CHANGES_LIMIT}`;
+  return hangeulJson<ChangesPage>(path, "The Hangeul change log", signal, (b) => Array.isArray(b.changes) && typeof b.next_seq === "number");
+}
+
+/** GET /api/hangeul/runs: the bot's recent runs, which date the device's "as of" lines. */
+export async function fetchHangeulRuns(signal?: AbortSignal): Promise<HgRun[]> {
+  const body = await hangeulJson<{ runs: HgRun[] }>("/api/hangeul/runs", "The Hangeul runs", signal, (b) => Array.isArray(b.runs));
+  return body.runs;
+}
+
+/** GET /api/hangeul: how much data Hangeul BOT has published, its latest runs and latest brief. */
+export async function fetchHangeulData(signal?: AbortSignal): Promise<HangeulDataStatus> {
+  const res = await request("/api/hangeul", { signal, timeoutMs: HANGEUL_TIMEOUT_MS });
+  try {
+    const data = (await res.json()) as Partial<HangeulDataStatus>;
+    if (data.configured !== true || typeof data.records !== "number" || !Array.isArray(data.lastRuns)) throw new Error("missing fields");
+    return data as HangeulDataStatus;
   } catch {
-    throw new ApiRequestError(res.status, "invalid_response", "Hangeul bridge returned malformed data.");
+    throw new ApiRequestError(res.status, "invalid_response", "Hangeul data status returned malformed data.");
   }
 }

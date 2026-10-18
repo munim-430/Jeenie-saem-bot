@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { AccessKeyDialog, type AccessKeyReason } from "@/components/AccessKeyDialog";
 import { AvatarPanel } from "@/components/AvatarPanel";
@@ -11,12 +11,17 @@ import type { OrbState } from "@/components/HologramOrb";
 import { HudHeader } from "@/components/HudHeader";
 import { MemoryPanel } from "@/components/MemoryPanel";
 import { isLangMode } from "@/components/LanguageToggle";
+import { HangeulSyncNotice } from "@/components/HangeulSyncNotice";
+import { HangeulSyncPanel, syncBlock } from "@/components/HangeulSyncPanel";
+import { OfflineBanner } from "@/components/OfflineBanner";
 import { ReactorCore } from "@/components/ReactorCore";
 import { TacticalMetrics } from "@/components/TacticalMetrics";
 import { useAvatarDirector } from "@/hooks/useAvatarDirector";
 import { useIdleWatch } from "@/hooks/useIdleWatch";
 import { useJeannieChat } from "@/hooks/useJeannieChat";
+import { useHangeulLocal } from "@/hooks/useHangeulLocal";
 import { useLastSeen } from "@/hooks/useLastSeen";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSpeechOutput } from "@/hooks/useSpeechOutput";
@@ -26,13 +31,19 @@ import { useViewMode } from "@/hooks/useViewMode";
 import { pickCheckIn } from "@/lib/avatar/idle";
 import { DESKTOP_LAYOUT_STORAGE_KEY, isDesktopLayout, type DesktopLayout } from "@/lib/avatar/view-mode";
 import { ApiRequestError, fetchSessionGreeting, readAccessKey, writeAccessKey } from "@/lib/client/api";
+import { sendUnlessOffline } from "@/lib/client/reachability";
+import { spokenText } from "@/lib/client/speech-text";
 import type { LangMode } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, resolveLanguage } from "@/lib/utils";
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+/** Until /api/status names it: the business time zone Hangeul BOT counts its days in. */
+const BUSINESS_TIME_ZONE = "Asia/Dhaka";
 
 /** Matches Tailwind's `xl`: below it five dock cards get too cramped, so the HUD keeps the orb layout. */
 const WIDE_HUD_QUERY = "(min-width: 1280px)";
+/** The dock fits a sixth card (Hangeul sync) only from here; narrower, sync stays in the classic HUD and on the phone. */
+const ROOMY_DOCK_QUERY = "(min-width: 1600px)";
 
 export default function JeannieHud() {
   const [lang, setLang] = usePersistentState<LangMode>("jeannie.lang", "auto", isLangMode);
@@ -54,6 +65,7 @@ export default function JeannieHud() {
   const avatarMode = viewMode.view === "avatar";
   // Wide HUD (desktop): Jeannie stands in the left frame and the panels move to a dock below.
   const wideScreen = useMediaQuery(WIDE_HUD_QUERY);
+  const roomyDock = useMediaQuery(ROOMY_DOCK_QUERY) === true;
   // Option 2 (avatar) unless the header's 1 | 2 switch picked Option 1 (classic HUD) on this device.
   const [desktopLayout, setDesktopLayout] = usePersistentState<DesktopLayout>(
     DESKTOP_LAYOUT_STORAGE_KEY,
@@ -66,6 +78,18 @@ export default function JeannieHud() {
   const awayMs = useLastSeen();
 
   const system = useSystemStatus();
+  // Offline (spec D10): a banner and a disabled input, never offline answers.
+  const { offline } = useOnlineStatus();
+  const offlineRef = useRef(offline);
+  // The Hangeul data on this device (ticket 7): only where the server serves it (key set and presented).
+  const hangeulServed = Boolean(system.status?.hangeul.configured && system.status.accessKeyRequired) && hasAccessKey;
+  const hgLocal = useHangeulLocal({
+    enabled: hangeulServed,
+    online: !offline,
+    phone: viewMode.isPhone,
+    timeZone: system.status?.timeZone ?? BUSINESS_TIME_ZONE,
+  });
+  const { prepare: prepareLocal } = hgLocal;
   const speech = useSpeechOutput({
     serverVoice: system.status ? system.status.voice.engines.some((engine) => engine !== "browser") : true,
   });
@@ -80,6 +104,7 @@ export default function JeannieHud() {
     voiceOnRef.current = voiceOn;
     attachmentRef.current = attachment;
     speechBusyRef.current = speech.speaking || speech.preparing;
+    offlineRef.current = offline;
   });
 
   // Browser-only facts, read after hydration.
@@ -99,10 +124,22 @@ export default function JeannieHud() {
     onEmote: (emote) => director.play(emote),
     onReplyComplete: (reply) => {
       // Not while the mic is open: she would be transcribed into the operator's next message.
-      if (voiceOnRef.current && !listeningRef.current) speech.speak(reply.text, reply.lang);
+      // A Hangeul reply is never sent to the voice engines (student data): a fixed line is spoken instead.
+      if (voiceOnRef.current && !listeningRef.current) speech.speak(spokenText(reply.text, reply.agent, reply.lang), reply.lang);
     },
     onAccessKeyRequired: (rejected) => setKeyDialog({ open: true, reason: rejected ? "rejected" : "required" }),
+    prepareHangeul: async ({ question, lang: mode, previous }) => {
+      const replyLang = resolveLanguage(mode, question, previous);
+      const prepared = await prepareLocal(question, replyLang);
+      if (!prepared) return null;
+      if (prepared.mode === "local") return { answer: { text: prepared.text, lang: replyLang } };
+      return prepared.hints ? { hints: prepared.hints } : null;
+    },
   });
+
+  // Every send (composer, quick commands, IoT tiles, voice) goes through here: nothing is sent while offline.
+  const { send: chatSend } = chat;
+  const send = useMemo(() => sendUnlessOffline(() => offlineRef.current, chatSend), [chatSend]);
 
   // Opening line: a Korean greeting for the operator's time of day. Once per page load,
   // after the status says whether a key is needed (a 401 here would be noise).
@@ -166,8 +203,7 @@ export default function JeannieHud() {
   const recognition = useSpeechRecognition({
     lang: recognitionLang,
     onFinal: (transcript) => {
-      chat.send(transcript, attachmentRef.current?.dataUrl ?? null);
-      setAttachment(null);
+      if (send(transcript, attachmentRef.current?.dataUrl ?? null)) setAttachment(null);
     },
   });
 
@@ -253,9 +289,8 @@ export default function JeannieHud() {
     setKeyDialog((prev) => ({ ...prev, open: false }));
   };
 
-  const sendCommand = (command: string) => {
-    chat.send(command);
-  };
+  // False when nothing was sent (offline): a smart-home tile then keeps its state.
+  const sendCommand = (command: string): boolean => send(command);
 
   const conversationCount = chat.messages.filter((m) => m.role !== "system").length;
   const replyLang = chat.messages.findLast((m) => m.role === "assistant" && m.lang)?.lang ?? null;
@@ -274,7 +309,8 @@ export default function JeannieHud() {
       attachment={attachment}
       onAttach={setAttachment}
       onOpenCamera={() => setCameraOpen(true)}
-      onSend={chat.send}
+      onSend={send}
+      offline={offline}
       onStop={() => {
         chat.stop();
         speech.stop();
@@ -299,6 +335,7 @@ export default function JeannieHud() {
       hasAccessKey={hasAccessKey}
       lang={lang}
       onCommand={sendCommand}
+      offline={offline}
       telemetry={chat.telemetry}
       messageCount={conversationCount}
       voiceEngine={speech.engine}
@@ -312,6 +349,19 @@ export default function JeannieHud() {
         statusReady={statusLoaded}
         onNotice={chat.notify}
       />
+      {!dock || roomyDock ? (
+        <HangeulSyncPanel
+          local={hgLocal}
+          blocked={syncBlock({
+            statusLoaded,
+            configured: Boolean(system.status?.hangeul.configured),
+            keyRequired: keyNeeded,
+            hasAccessKey,
+          })}
+          total={system.status?.hangeul.records ?? null}
+          onNotice={chat.notify}
+        />
+      ) : null}
     </TacticalMetrics>
   );
 
@@ -327,6 +377,7 @@ export default function JeannieHud() {
           onSwitchToHud={() => viewMode.setView("hud")}
           voiceLevel={speech.getLevel}
           voiceMeasured={speech.routed}
+          offline={offline}
         />
       ) : (
         // The server renders the HUD (desktop unchanged); phones keep it hidden until the view is known.
@@ -358,7 +409,7 @@ export default function JeannieHud() {
               {renderChat("min-h-0")}
               {/* The dock: every panel as an equal card, each scrolling inside its own height. */}
               {renderPanels(
-                "col-span-2 grid h-[clamp(230px,33vh,340px)] grid-cols-5 items-stretch gap-3 [&>*]:min-h-0 [&>*]:overflow-y-auto [&>*]:overscroll-contain",
+                "col-span-2 grid h-[clamp(230px,33vh,340px)] auto-cols-[minmax(0,1fr)] grid-flow-col items-stretch gap-3 [&>*]:min-h-0 [&>*]:overflow-y-auto [&>*]:overscroll-contain",
                 true,
               )}
             </main>
@@ -389,6 +440,8 @@ export default function JeannieHud() {
       {viewMode.view === "hud" && viewMode.isPhone ? (
         <AvatarReturnButton onClick={() => viewMode.setView("avatar")} />
       ) : null}
+      <OfflineBanner offline={offline} variant={avatarMode ? "avatar" : "hud"} />
+      {avatarMode && hangeulServed && !offline ? <HangeulSyncNotice local={hgLocal} total={system.status?.hangeul.records ?? null} /> : null}
 
       <CameraScanner
         open={cameraOpen}

@@ -1,6 +1,9 @@
 # Prompt for Claude Code on the Hangeul PC: publish every finding to Supabase too
 
-Status: ready-for-agent (run on the Windows PC in `C:\Hangeul\BOT`, after the Jeannie migration is applied)
+Status: resolved (run on the Windows PC in `C:\Hangeul\BOT`: the bot's one-time backfill wrote 13,540 records and
+15,629 chunks on 30 Sep 22:05, and the bot keeps them current; kept as the record of what was asked. The source of
+truth for every kind is now the bot's `src/cloud/records.py` and the pack's `13_SUPABASE_PUBLISHING.md`; see the
+comments.)
 
 Paste everything below the line into a Claude Code session opened in `C:\Hangeul\BOT`.
 
@@ -156,6 +159,7 @@ kind with the same pattern, and list it in your final report so the Jeannie side
 | `passport_alert` | `uid + "|" + file` | `all` | the watcher memory entries (`data\alerted_passport_issues.json`): alert text, sent, sent_at |
 | `passport_issue` | passport number | `all` | `data\passport_issue.json` |
 | `doc_verdict` | `passport + "|" + document` | passport | `results.json` `documents` (verdict, failing rules, flags) |
+| `doc_check` | passport | `all` | added by the bot: `results.json` `documents[P]` as one student-level result (student, program, verdict, checked) with its document rows' and field rows' verdict counts |
 | `field_check` | `passport + "|" + field` | passport | `results.json` `fields` (FIELD CHECK rows) |
 | `field_correction` | sha1 of the correction entry | `all` | `results.json` `corrections` (append-only history; never deleted) |
 | `doc_page_text` | `passport + "|" + file + "|p" + page` | passport | the OCR text cache `data\verification\text\<PASSPORT>.json`, one record per page; long pages become several chunks |
@@ -163,6 +167,11 @@ kind with the same pattern, and list it in your final report so the Jeannie side
 | `report_section` | `<report>|<day>|<section or student line n>` | `<report>|<day>` | the same reports split per section or per student line (D8) |
 | `brief_fact` | `<ISO day>|<n>` | ISO day | each numbered fact of `Brief(text, facts)` |
 | `notification` | sha1 of text plus time | ISO day | each Telegram notification the jobs send (sync summaries, document-check notices, alerts), as sent |
+| `consultant_performance` | `<period>|<first ISO day>|<name>` (`#2` for a repeated name), and `<period>|<first ISO day>|summary` | `<period>|<first ISO day>` | added by the bot: `consult_performance.php?period=today|month`, one record per leaderboard row (rank, score, conversion, files opened, consultancies, points, docs ready) and a summary record with the tiles ("Consultancies done", "Files opened", "Conversion (file open)", "Docs ready") and the top performer; `day` = the range's last day |
+
+Every kind read from the portal's own fields also carries `data.blank_on_portal` (added by the bot): the names of
+the fields the portal left as a filler ("N/A", "PENDING", "—"...), blanked in `data` and left out of the text, so
+Jeannie says "not given on the portal" instead of a made-up value.
 
 Reports that are also `.xlsx` files (`DOCUMENT CHECK.xlsx`, `FIELD CHECK.xlsx`, the missing report) are
 published from the data they are built from, never by uploading the file.
@@ -280,3 +289,13 @@ heading followed by its lines.
 
 Creating or changing tables (the Jeannie repo owns them), Supabase Auth, the PWA, Jeannie's answers, and
 uploading any binary file.
+
+## Comments
+
+- 1 Oct 2026: done on the PC. The bot's one-time backfill (`src.cloud.backfill`) wrote 13,540 records and 15,629
+  chunks on 30 Sep 22:05, and the bot keeps them current (hourly, after its jobs and after commands). It added two
+  kinds to the table above, now listed there, and the `blank_on_portal` data key: `doc_check` (one result per
+  passport) and `consultant_performance` (the portal's Consultant Performance page, which answers the owner's "how
+  many consultancies were closed today?"). The spec's comment of the same day records them too. From here the
+  data contract's source of truth is the bot's `src/cloud/records.py` (every kind's key, scope, day, data fields
+  and text) and the reference pack's `13_SUPABASE_PUBLISHING.md`; this prompt is not re-run.

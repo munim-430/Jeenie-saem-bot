@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ArrowDown, Eraser, FileText, Languages, Lightbulb, Newspaper, Terminal, type LucideIcon } from "lucide-react";
 import type { ChatPhase, HudMessage } from "@/hooks/useJeannieChat";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
+import { OFFLINE_LINE } from "@/lib/client/reachability";
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatComposer, type Attachment } from "./ChatComposer";
@@ -42,6 +43,8 @@ interface ChatTerminalProps {
   onClear: () => void;
   onNotice: (message: string) => void;
   recognition: SpeechRecognitionState;
+  /** No connection (spec D10): the composer and the quick commands are disabled. */
+  offline?: boolean;
   className?: string;
 }
 
@@ -53,7 +56,7 @@ const PHASE_LABEL: Record<ChatPhase, string> = {
   streaming: "RECEIVING",
 };
 
-function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
+function EmptyState({ onPick, disabled }: { onPick: (prompt: string) => void; disabled: boolean }) {
   return (
     <div className="flex min-h-full flex-col justify-center gap-5 px-1 py-2">
       <div className="space-y-2">
@@ -76,7 +79,8 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.35 + index * 0.07 }}
               onClick={() => onPick(s.prompt)}
-              className="hud-chip"
+              disabled={disabled}
+              className="hud-chip disabled:cursor-not-allowed disabled:opacity-50"
             >
               <s.icon aria-hidden="true" className="h-3.5 w-3.5 text-neon-hot" />
               {s.label}
@@ -105,6 +109,7 @@ export function ChatTerminal({
   onClear,
   onNotice,
   recognition,
+  offline = false,
   className,
 }: ChatTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -208,7 +213,7 @@ export function ChatTerminal({
           className="h-full space-y-4 overflow-y-auto overscroll-contain px-3 py-4"
         >
           {messages.length === 0 ? (
-            <EmptyState onPick={(prompt) => send(prompt, null)} />
+            <EmptyState onPick={(prompt) => send(prompt, null)} disabled={offline} />
           ) : (
             messages.map((message) => <ChatMessageView key={message.id} message={message} />)
           )}
@@ -245,6 +250,8 @@ export function ChatTerminal({
         onStop={onStop}
         onNotice={onNotice}
         recognition={recognition}
+        disabled={offline}
+        disabledText={lang === "ko" ? OFFLINE_LINE.ko : OFFLINE_LINE.en}
       />
     </section>
   );

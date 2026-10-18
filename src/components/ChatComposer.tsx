@@ -13,6 +13,7 @@ import { Camera, ImagePlus, LoaderCircle, Mic, SendHorizontal, Square, Volume2, 
 import type { ChatPhase } from "@/hooks/useJeannieChat";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { prepareImageFile } from "@/lib/client/image";
+import { canSendMessage } from "@/lib/client/reachability";
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { LanguageToggle } from "./LanguageToggle";
@@ -38,6 +39,10 @@ interface ChatComposerProps {
   onStop: () => void;
   onNotice: (message: string) => void;
   recognition: SpeechRecognitionState;
+  /** Offline (spec D10): the text box, mic, attachments and SEND are disabled; STOP still works. */
+  disabled?: boolean;
+  /** Shown as the placeholder while disabled (the offline line). */
+  disabledText?: string;
 }
 
 const HOLD_TO_TALK_MS = 450;
@@ -59,6 +64,8 @@ export function ChatComposer({
   onStop,
   onNotice,
   recognition,
+  disabled = false,
+  disabledText,
 }: ChatComposerProps) {
   const [draft, setDraft] = useState("");
   const [preparing, setPreparing] = useState(false);
@@ -67,7 +74,7 @@ export function ChatComposer({
   const pressRef = useRef<{ startedByPress: boolean; at: number }>({ startedByPress: false, at: 0 });
   const sentAtRef = useRef(0);
   const busy = phase !== "idle";
-  const canSend = (draft.trim().length > 0 || attachment !== null) && !preparing;
+  const canSend = canSendMessage({ draft, hasAttachment: attachment !== null, preparing, disabled });
   // While she speaks, STOP silences her; typing a new message brings SEND back.
   const showStop = busy || (speaking && !canSend);
 
@@ -147,11 +154,13 @@ export function ChatComposer({
     if (!pressRef.current.startedByPress) recognition.stop();
   };
 
-  const micTitle = recognition.supported
-    ? recognition.listening
-      ? "Stop listening"
-      : "Voice input: tap to talk, or hold and release to send"
-    : "Voice input is not supported in this browser";
+  const micTitle = disabled
+    ? (disabledText ?? "Voice input is disabled")
+    : recognition.supported
+      ? recognition.listening
+        ? "Stop listening"
+        : "Voice input: tap to talk, or hold and release to send"
+      : "Voice input is not supported in this browser";
 
   return (
     <div className="border-t border-neon/25 bg-void/40 p-2.5 sm:p-3">
@@ -239,7 +248,10 @@ export function ChatComposer({
           onKeyDown={onKeyDown}
           rows={1}
           enterKeyHint="send"
-          placeholder={lang === "ko" ? "지니에게 명령하세요…" : "Command Jeannie… · 지니에게 말하기"}
+          disabled={disabled}
+          placeholder={
+            disabled && disabledText ? disabledText : lang === "ko" ? "지니에게 명령하세요…" : "Command Jeannie… · 지니에게 말하기"
+          }
           // 16px on phones: iOS Safari zooms into any smaller focused field.
           className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2.5 text-base leading-relaxed text-white outline-none focus-visible:shadow-none focus-visible:outline-none sm:text-[0.92rem]"
         />
@@ -250,6 +262,7 @@ export function ChatComposer({
               onClick={onOpenCamera}
               aria-label="Open camera scanner"
               title="Camera scanner"
+              disabled={disabled}
               className="hud-btn border-transparent bg-transparent"
             >
               <Camera aria-hidden="true" className="h-[18px] w-[18px]" />
@@ -259,7 +272,7 @@ export function ChatComposer({
               onClick={() => fileRef.current?.click()}
               aria-label="Attach an image"
               title="Attach image"
-              disabled={preparing}
+              disabled={preparing || disabled}
               className="hud-btn border-transparent bg-transparent"
             >
               {preparing ? (
@@ -283,7 +296,8 @@ export function ChatComposer({
               onPointerUp={micUp}
               onClick={micClick}
               onContextMenu={(event) => event.preventDefault()}
-              disabled={!recognition.supported}
+              // A mic already open can still be closed.
+              disabled={!recognition.supported || (disabled && !recognition.listening)}
               aria-pressed={recognition.listening}
               aria-label={micTitle}
               title={micTitle}

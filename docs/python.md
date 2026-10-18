@@ -52,11 +52,13 @@ compositions. Nothing in the app calls it.
 ## Hangeul BOT (outside this repo)
 
 A Python program on the office Windows PC that logs into the Hangeul admin portal (`hangeul.com.bd/admin`),
-reads student and report pages, and builds reports. This repo only describes what it is asked to add, in
-`.scratch/hangeul-cloud-context/hangeul-bot-prompt.md`. That work is **planned, not built**:
+reads student and report pages, and builds reports. It is the only source of Jeannie's Hangeul data: besides
+its own outputs, it publishes everything it reads to Supabase. What it was asked to add is recorded in
+`.scratch/hangeul-cloud-context/hangeul-bot-prompt.md` (status: resolved, so this part is **built**):
 
 - Compute `gte-small` embeddings (`sentence-transformers`) of each record's text.
 - Publish everything to Supabase through the `hg_sync` database function (`hg_runs`, `hg_records`,
-  `hg_chunks`), with a `src.cloud.backfill` step for the first full upload.
+  `hg_chunks`), with a `src.cloud.backfill` step for the first full upload; it keeps the rows current after.
 
-What that data is and where it would go: [data-flow.md](data-flow.md#planned-hangeul-cloud-context-not-built).
+Jeannie only reads those tables and never runs this bot. What that data is and where it goes:
+[data-flow.md](data-flow.md#hangeul-data-student-records).

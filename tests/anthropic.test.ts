@@ -138,7 +138,7 @@ describe("Claude requests through the orchestrator", () => {
 describe("/api/status with Claude", () => {
   it("reports the Claude models without exposing the key", async () => {
     useClaude();
-    const res = await statusGET();
+    const res = await statusGET(new Request("http://localhost/api/status"));
     const status = (await res.json()) as { llm: unknown };
 
     expect(status.llm).toEqual({

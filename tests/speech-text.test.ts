@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formatHangeulReport, formatHangeulStatus, getHangeulReport, getHangeulStatus } from "@/lib/agents/hangeul-bridge";
 import { formatSearchBriefing } from "@/lib/agents/search-agent";
-import { clipAtSentence, SPEECH_MAX_CHARS, speechSegments } from "@/lib/client/speech-text";
+import { planFor, renderAnswer, runPlan } from "@/lib/hangeul/answer";
+import { readersFromRecords } from "@/lib/hangeul/memory-readers";
+import { NOW, records, runs, TZ } from "./hangeul-fixtures";
+import { clipAtSentence, HANGEUL_SPOKEN_LINE, SPEECH_MAX_CHARS, speechSegments, spokenText } from "@/lib/client/speech-text";
 import type { SearchResponse } from "@/lib/types";
 
 const spoken = (text: string, lang: Parameters<typeof speechSegments>[1] = "en") =>
@@ -48,26 +50,50 @@ describe("speechSegments: what is read aloud", () => {
     expect(spoken("Read [the guide](https://example.com/guide) first.")).toBe("Read the guide first.");
   });
 
-  it("reads a Hangeul report as its title and highlights, not the data dump", async () => {
-    const report = await getHangeulReport({ trusted: false });
-    const en = spoken(formatHangeulReport(report, "en"));
-    expect(en).toMatch(/^Hangeul daily operations report \(demo data\)\. /);
-    expect(en).toContain(report.highlights[0]);
-    expect(en).not.toMatch(/UTC|Generated|Active students|Highlights|HANGEUL_|https?:/);
+  async function hangeulAnswer(question: string, lang: "en" | "ko" | "bilingual") {
+    const plan = planFor(question, { today: "2026-09-30", now: NOW, timeZone: TZ });
+    const result = await runPlan(plan, readersFromRecords({ records: records(), runs: runs() }), { now: NOW, timeZone: TZ });
+    return renderAnswer(result, lang, { now: NOW, timeZone: TZ });
+  }
 
-    const ko = spoken(formatHangeulReport(report, "ko"), "ko");
-    expect(ko).not.toMatch(/UTC|생성 시각|주요 사항|•|HANGEUL_/);
-    expect(ko.length).toBeGreaterThan(10);
+  it("reads a Hangeul answer as its headline and notes, not the fact and table bullets or the as-of line", async () => {
+    const en = spoken(await hangeulAnswer("how many consultancies were closed today?", "en"));
+    expect(en).toMatch(/^Consultancies done today \(30 Sep\): 20 — TEST CONSULTANT C 8/);
+    expect(en).toContain("Requests received today (30 Sep): 10 (Consulted 6, New 4).");
+    expect(en).not.toMatch(/Files opened: 5|By consultant|As of|•/);
 
-    const both = speechSegments(formatHangeulReport(report, "bilingual"), "bilingual");
+    const ko = spoken(await hangeulAnswer("오늘 상담 몇 건 끝났어?", "ko"), "ko");
+    expect(ko).toMatch(/^오늘\(9월 30일\) 상담 완료: 20/);
+    expect(ko).not.toMatch(/기준:|•/);
+
+    const both = speechSegments(await hangeulAnswer("how many consultancies were closed today?", "bilingual"), "bilingual");
     expect(both.map((s) => s.lang)).toEqual(["en", "ko"]);
   });
 
-  it("reads a Hangeul status check without its timestamps", async () => {
-    const status = await getHangeulStatus({ trusted: false });
-    const text = spoken(formatHangeulStatus(status, "en"));
-    expect(text).toMatch(/^Hangeul portal: /);
-    expect(text).not.toMatch(/Checked|Latency|UTC/);
+  it("a Hangeul reply is never sent to the voice engines: a fixed line is spoken, no student name or id", async () => {
+    // The student card's headline would be "TEST STUDENT ONE (HNG-2026-012, portal uid 101): Documents Verified."
+    const card = await hangeulAnswer("Who is HNG-2026-12?", "en");
+    expect(card).toContain("TEST STUDENT ONE (HNG-2026-012, portal uid 101)");
+    for (const lang of ["en", "ko", "bilingual"] as const) {
+      const text = await hangeulAnswer("Who is HNG-2026-12?", lang);
+      const said = speechSegments(spokenText(text, "hangeul", lang), lang).map((s) => s.text).join(" ");
+      for (const secret of ["TEST STUDENT", "HNG-2026", "101", "A00000001", "01700000001", "TEST CONSULTANT"]) expect(said).not.toContain(secret);
+    }
+    expect(speechSegments(spokenText(card, "hangeul", "en"), "en")).toEqual([{ text: HANGEUL_SPOKEN_LINE.en, lang: "en" }]);
+    expect(speechSegments(spokenText(card, "hangeul", "ko"), "ko")).toEqual([{ text: HANGEUL_SPOKEN_LINE.ko, lang: "ko" }]);
+    expect(speechSegments(spokenText(card, "hangeul", "bilingual"), "bilingual").map((s) => s.text)).toEqual([HANGEUL_SPOKEN_LINE.en, HANGEUL_SPOKEN_LINE.ko]);
+    // The owner's question: every consultant's name is in its headline.
+    const owner = await hangeulAnswer("how many consultancies were closed today?", "en");
+    expect(spokenText(owner, "hangeul", "en")).not.toContain("TEST CONSULTANT");
+    // Every other agent's reply is spoken as before.
+    expect(spokenText("Seoul is sunny today.", "search", "en")).toBe("Seoul is sunny today.");
+    expect(spokenText("Yes, it is done.", null, "en")).toBe("Yes, it is done.");
+  });
+
+  it("reads a Hangeul data-status answer without its run table", async () => {
+    const text = spoken(await hangeulAnswer("Is the Hangeul portal up?", "en"));
+    expect(text).toMatch(/^Hangeul BOT reads the portal/);
+    expect(text).not.toMatch(/Finished|portal sync:|17:58/);
   });
 
   it("ends every spoken line as a sentence, once", () => {
@@ -78,8 +104,8 @@ describe("speechSegments: what is read aloud", () => {
 
   it("says configuration names as words and skips lists of them", () => {
     expect(spoken("Set OPENAI_API_KEY and I'll be online.")).toBe("Set OPENAI API KEY and I'll be online.");
-    expect(spoken("The portal is not configured (HANGEUL_BASE_URL, HANGEUL_USERNAME), so this is demo data.")).toBe(
-      "The portal is not configured, so this is demo data.",
+    expect(spoken("The Hangeul data isn't connected (SUPABASE_URL, SUPABASE_SECRET_KEY), so ask again later.")).toBe(
+      "The Hangeul data isn't connected, so ask again later.",
     );
   });
 

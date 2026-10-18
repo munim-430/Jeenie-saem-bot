@@ -6,7 +6,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { routeQuery, runOrchestrator, runOrchestratorToText } from "@/lib/agents/orchestrator";
 import { resetSearchState } from "@/lib/agents/search-agent";
 import { IMAGE_PLACEHOLDER } from "@/lib/agents/vision-agent";
+import { readersFromRecords } from "@/lib/hangeul/memory-readers";
 import type { ChatMessage } from "@/lib/types";
+import { NOW, records, runs } from "./hangeul-fixtures";
 
 /** LanguageModelV4 stream part, derived from the mock so tests need no transitive import. */
 type StreamPart = Awaited<ReturnType<MockLanguageModelV4["doStream"]>>["stream"] extends ReadableStream<infer T> ? T : never;
@@ -79,7 +81,7 @@ beforeEach(() => {
   ]) {
     vi.stubEnv(name, "");
   }
-  for (const name of ["HANGEUL_BASE_URL", "HANGEUL_USERNAME", "HANGEUL_PASSWORD", "MOCK_MODE"]) vi.stubEnv(name, "");
+  for (const name of ["MOCK_MODE", "SUPABASE_SECRET_KEY", "NEXT_PUBLIC_SUPABASE_URL"]) vi.stubEnv(name, "");
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
@@ -250,12 +252,24 @@ describe("offline mode (no LLM configured)", () => {
     expect(ko.text).toContain("실시간 검색 결과를 받지 못했어요");
   });
 
-  it("hangeul still works and returns the formatted mock report", async () => {
+  it("Hangeul data answers still work: code-built figures, no model, and never demo data", async () => {
     const fetchMock = stubSearch();
-    const result = await runOrchestratorToText({ messages: [user("hangeul report please")] }, { trusted: true });
+    const hangeul = readersFromRecords({ records: records(), runs: runs() });
+    const result = await runOrchestratorToText(
+      { messages: [user("how many consultancies were closed today?")] },
+      { trusted: true, hangeul, now: NOW },
+    );
     expect(result).toMatchObject({ agent: "hangeul", provider: "none", sources: [] });
-    expect(result.text).toContain("Hangeul daily operations report (demo data)");
+    expect(result.text).toContain("Consultancies done today (30 Sep): 20");
+    expect(result.text).toContain("As of 17:35 (full picture)");
+    expect(result.text).not.toMatch(/demo|mock/i);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("without Supabase configured, a trusted Hangeul question says so", async () => {
+    const result = await runOrchestratorToText({ messages: [user("hangeul report please")] }, { trusted: true });
+    expect(result).toMatchObject({ agent: "hangeul", provider: "none" });
+    expect(result.text).toContain("The Hangeul data isn't connected");
   });
 });
 
@@ -543,16 +557,45 @@ describe("vision agent", () => {
 });
 
 describe("hangeul agent with a model", () => {
-  it("summarizes the report JSON and falls back to the plain report on failure", async () => {
-    const model = mockModel(textParts("Executive briefing."));
-    const ok = await runOrchestratorToText({ messages: [user("Hangeul report")] }, { trusted: false, model });
-    expect(ok).toMatchObject({ agent: "hangeul", provider: "openai", text: "Executive briefing." });
-    expect(systemPrompt(model)).toContain('"source": "mock"');
+  /** A model for generateText (the Hangeul prose is checked before it is sent, so it is not streamed). */
+  function proseModel(text: string | Error) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        if (text instanceof Error) throw text;
+        return { content: [{ type: "text", text }], finishReason: { unified: "stop", raw: "stop" }, usage, warnings: [] };
+      },
+    });
+  }
+  const hangeul = () => readersFromRecords({ records: records(), runs: runs() });
+  const ask = (content: string, model: MockLanguageModelV4, trusted = true) =>
+    runOrchestratorToText({ messages: [user(content)] }, { trusted, model, hangeul: hangeul(), now: NOW });
 
-    const broken = mockModel([{ type: "error", error: new Error("down") }]);
-    const fallback = await runOrchestratorToText({ messages: [user("한글 포털 상태")] }, { trusted: false, model: broken });
-    expect(fallback.agent).toBe("hangeul");
-    expect(fallback.text).toContain("한글 포털 상태: 온라인 (데모)");
+  it("puts two checked sentences before the code-built facts; a sentence with a made-up number is dropped", async () => {
+    const model = proseModel("[emote:nod] 20 consultancies done today, 부장님, with TEST CONSULTANT C on 8. That is 45% more than usual.");
+    const result = await ask("how many consultancies were closed today?", model);
+    expect(result).toMatchObject({ agent: "hangeul", provider: "openai" });
+    expect(result.text.startsWith("[emote:nod] 20 consultancies done today, 부장님, with TEST CONSULTANT C on 8.\n\nConsultancies done today (30 Sep): 20")).toBe(true);
+    expect(result.text).not.toContain("45%");
+    expect(result.text).toContain("As of 17:35 (full picture)");
+    // The model saw the directive and the facts with their values (D11).
+    const prompt = JSON.stringify(model.doGenerateCalls[0].prompt);
+    expect(prompt).toContain("Hangeul data desk");
+    expect(prompt).toContain("TEST CONSULTANT C");
+    expect(prompt).toContain("Every number you write must appear in that JSON");
+  });
+
+  it("shows the facts alone when the model fails", async () => {
+    const result = await ask("how many consultancies were closed today?", proseModel(new Error("down")));
+    expect(result.provider).toBe("none");
+    expect(result.text.startsWith("Consultancies done today (30 Sep): 20")).toBe(true);
+  });
+
+  it("never reads the data for an untrusted caller", async () => {
+    const model = proseModel("should not be used");
+    const result = await ask("how many consultancies were closed today?", model, false);
+    expect(result.text).toContain("access key");
+    expect(result.text).not.toContain("20");
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 });
 

@@ -1,10 +1,29 @@
 // What Jeannie reads aloud. The terminal shows the whole reply, but the voice
 // gets a short spoken version: no URLs, no numbered source or result lists, no
-// report data dumps (timestamps, metric bullets), and at most SPEECH_MAX_CHARS
-// characters cut at a sentence boundary.
+// data dumps (Hangeul fact and table bullets, "as of" lines, timestamps), and at
+// most SPEECH_MAX_CHARS characters cut at a sentence boundary.
 
-import type { ResolvedLang } from "@/lib/types";
+import type { AgentId, ResolvedLang } from "@/lib/types";
 import { detectLanguage, stripMarkdownForSpeech } from "@/lib/utils";
+
+/**
+ * What a Hangeul reply says out loud. The voice goes to /api/tts, whose engines
+ * are ElevenLabs and Microsoft Edge TTS: third parties the spec's accepted risks
+ * (D11) do not name. A Hangeul headline holds student names, HNG ids and portal
+ * uids, or every consultant's name, so the reply is not read aloud; this line
+ * is, and the figures stay on the screen.
+ */
+export const HANGEUL_SPOKEN_LINE = {
+  en: "The answer is on your screen.",
+  ko: "답을 화면에 띄워 드렸어요.",
+} as const;
+
+/** The text to speak for a finished reply of `agent`: a Hangeul reply becomes HANGEUL_SPOKEN_LINE in its language. */
+export function spokenText(text: string, agent: AgentId | null | undefined, lang: ResolvedLang | null): string {
+  if (agent !== "hangeul") return text;
+  if (lang === "bilingual") return `${HANGEUL_SPOKEN_LINE.en}\n—\n${HANGEUL_SPOKEN_LINE.ko}`;
+  return lang === "ko" ? HANGEUL_SPOKEN_LINE.ko : HANGEUL_SPOKEN_LINE.en;
+}
 
 export type SpeechLang = "en" | "ko";
 
@@ -25,20 +44,20 @@ const MAX_SCANNED_CHARS = 8_000;
 const SOURCES_LABEL = /^\s*[*_]*(?:sources|references|출처|참고\s*자료)(?:\s*\/\s*(?:sources|출처))?\s*[:：]?[*_]*\s*$/i;
 // "[1] Title — snippet — https://…": one entry of a search briefing or source list.
 const LISTED_SOURCE = /^\s*(?:[-*•]\s*)?\[\d{1,2}\]\s/;
-// Metadata lines of the search briefing and the Hangeul report/status formatters.
+// Metadata lines of the search briefing and the Hangeul answers ("As of 23:35 (full picture)", "기준: 23:35").
 const DATA_LINE =
-  /^\s*(?:(?:no\s+)?live web results for\b|(?:generated|checked|latency)\s*:|(?:생성|확인)\s*시각\s*:|응답\s*시간\s*:)/i;
-// "• Active students: 248": a metric row of the Hangeul report.
+  /^\s*(?:(?:no\s+)?live web results for\b|(?:generated|checked|latency)\s*:|(?:생성|확인)\s*시각\s*:|응답\s*시간\s*:|as of \d|기준\s*:)/i;
+// "• Consultancies done: 20", "• Consulted: 6": a code-built fact or table row of a Hangeul answer.
 const METRIC_BULLET = /^\s*•\s*[^:：\n]{1,60}[:：]/;
 // A heading-like label on its own line ("Highlights:", "주요 사항:").
 const SHORT_LABEL = /^\s*[^\s:：]+(?:\s+[^\s:：]+){0,2}\s*[:：]\s*$/;
 const URLS = /\b(?:https?:\/\/|www\.)\S+/gi;
 const INLINE_CITATION = /\s*\[\d{1,2}\]/g;
-// "(HANGEUL_BASE_URL, HANGEUL_USERNAME)": configuration names are for the screen.
+// "(SUPABASE_URL, SUPABASE_SECRET_KEY)": configuration names are for the screen.
 const ENV_NAME_GROUP = /\s*\(\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:\s*,\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)*\s*\)/g;
 const ENV_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g;
 
-/** "Title (demo data)" → "Title (demo data)."; text already ending a sentence or clause is left alone. */
+/** "Daily brief: not available yet" → "Daily brief: not available yet."; text already ending a sentence or clause is left alone. */
 function asSentence(line: string): string {
   return /[.!?。！？…,;、，][)\]"'”’」]*$/.test(line) ? line : `${line}.`;
 }

@@ -38,6 +38,14 @@ export function memoryConfigured(): boolean {
  * go in `Authorization`, which is what makes PostgREST run as service_role.
  */
 export async function supabaseRest<T = unknown>(path: string, request: SupabaseRequest = {}): Promise<T> {
+  return (await supabaseRestResponse<T>(path, request)).data;
+}
+
+/** Same as supabaseRest, with the response headers (e.g. `Content-Range` for `Prefer: count=exact`). */
+export async function supabaseRestResponse<T = unknown>(
+  path: string,
+  request: SupabaseRequest = {},
+): Promise<{ data: T; headers: Headers }> {
   const { memory } = getEnv();
   if (!memory.supabaseUrl || !memory.serviceKey) throw new MemoryError("memory not configured");
 
@@ -61,8 +69,7 @@ export async function supabaseRest<T = unknown>(path: string, request: SupabaseR
       cache: "no-store",
     });
   } catch (error) {
-    const name = error instanceof Error ? error.name : "";
-    throw new MemoryError(name === "TimeoutError" ? "timeout" : name === "AbortError" ? "aborted" : "network error");
+    throw new MemoryError(failureReason(error));
   }
 
   if (!res.ok) {
@@ -76,7 +83,19 @@ export async function supabaseRest<T = unknown>(path: string, request: SupabaseR
     }
     throw new MemoryError(`HTTP ${res.status}${code}`, res.status);
   }
-  if (res.status === 204) return null as T;
-  const text = await res.text();
-  return (text ? JSON.parse(text) : null) as T;
+  if (res.status === 204) return { data: null as T, headers: res.headers };
+  // The timeout covers the body too: a large page can arrive in 0.5 s of headers and many seconds of body.
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (error) {
+    throw new MemoryError(failureReason(error));
+  }
+  return { data: (text ? JSON.parse(text) : null) as T, headers: res.headers };
+}
+
+/** A fetch or body read that failed: "timeout", "aborted" (the caller cancelled) or "network error". */
+function failureReason(error: unknown): "timeout" | "aborted" | "network error" {
+  const name = error && typeof error === "object" && "name" in error ? String((error as { name: unknown }).name) : "";
+  return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "aborted" : "network error";
 }

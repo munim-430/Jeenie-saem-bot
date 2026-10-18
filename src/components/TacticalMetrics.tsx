@@ -4,8 +4,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Activity, Cpu, FileText, House, RefreshCw, Send } from "lucide-react";
 import type { ChatTelemetry } from "@/hooks/useJeannieChat";
 import { formatClock, formatDuration, useNow } from "@/hooks/useNow";
-import { ApiRequestError, fetchHangeulStatus, isAbortError } from "@/lib/client/api";
-import type { HangeulStatus, LangMode, ResolvedLang, SystemStatus, TtsEngine } from "@/lib/types";
+import { ApiRequestError, fetchHangeulData, isAbortError } from "@/lib/client/api";
+import { OFFLINE_LINE } from "@/lib/client/reachability";
+import type { HangeulDataStatus, HangeulRunSummary, LangMode, ResolvedLang, SystemStatus, TtsEngine } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AgentBadge } from "./ChatMessageView";
 import { HudPanel } from "./HudPanel";
@@ -119,8 +120,21 @@ function SystemStatusPanel({
         <StatusRow
           label="HANGEUL"
           ko="한글"
-          value={status.hangeul.mode === "live" ? "LIVE PORTAL" : "MOCK DATA"}
-          led={status.hangeul.mode === "live" ? "on" : "warn"}
+          value={
+            !status.hangeul.configured
+              ? "NOT LINKED"
+              : status.hangeul.records !== null
+                ? `DATA · ${status.hangeul.records.toLocaleString("en-US")}`
+                : "DATA LINKED"
+          }
+          title={
+            status.hangeul.lastRuns?.length
+              ? `Latest runs: ${status.hangeul.lastRuns.map((r) => `${jobName(r.job)} ${clockOf(r.finishedAt)} (${r.status ?? "?"})`).join(", ")}`
+              : status.hangeul.configured
+                ? "Hangeul BOT's data in Supabase"
+                : "Set SUPABASE_URL and SUPABASE_SECRET_KEY"
+          }
+          led={status.hangeul.configured ? "on" : "off"}
         />
         <StatusRow
           label="ACCESS"
@@ -225,76 +239,129 @@ function TelemetryPanel({
   );
 }
 
+const JOB_NAME: Record<string, string> = {
+  full_picture: "Full picture",
+  portal_sync: "Portal sync",
+  passport_watcher: "Passport watcher",
+  backfill: "Backfill",
+  daily_brief: "Brief",
+  missing_report: "Missing report",
+  issue_refresh: "Issue refresh",
+  stage_report: "Stage report",
+  command: "Command",
+};
+
+function jobName(job: string): string {
+  return JOB_NAME[job] ?? job.replace(/_/g, " ");
+}
+
+/** "missing_report" → "Missing report", "stage_report:KLP:MARCH 2027" → "Stage report". */
+function reportName(report: string): string {
+  const base = report.split(":")[0].replace(/_/g, " ");
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+/** "23:35" today, "30 Sep 23:35" on another day (the browser's own time zone). */
+function clockOf(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return sameDay ? time : `${date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
+}
+
 function HangeulPanel({
-  mode,
+  configured,
   onReport,
   statusReady,
   hasAccessKey,
   locked,
+  offline = false,
 }: {
-  mode: "live" | "mock" | null;
+  /** Whether the server has the Supabase project Hangeul BOT publishes to (null until /api/status answers). */
+  configured: boolean | null;
   onReport: () => void;
+  /** Offline (spec D10): DAILY REPORT cannot be sent, so it is disabled. */
+  offline?: boolean;
   statusReady: boolean;
   /** The API needs a key and none is stored: skip the request that would 401. */
   locked: boolean;
-  /** Re-checks the bridge once a key is entered (live data needs a trusted caller). */
+  /** Re-reads the data status once a key is entered. */
   hasAccessKey: boolean;
 }) {
-  const [bridge, setBridge] = useState<HangeulStatus | null>(null);
-  const [bridgeError, setBridgeError] = useState<string | null>(null);
+  const [data, setData] = useState<HangeulDataStatus | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!statusReady) return;
+    if (!statusReady || configured === null) return;
+    if (!configured) {
+      setData(null);
+      setDataError("Not linked: set SUPABASE_URL and SUPABASE_SECRET_KEY.");
+      return;
+    }
     if (locked) {
-      setBridge(null);
-      setBridgeError("Locked: access key required.");
+      setData(null);
+      setDataError("Locked: access key required.");
       return;
     }
     const controller = new AbortController();
-    fetchHangeulStatus(controller.signal)
+    fetchHangeulData(controller.signal)
       .then((next) => {
-        setBridge(next);
-        setBridgeError(null);
+        setData(next);
+        setDataError(null);
       })
       .catch((error: unknown) => {
         if (isAbortError(error)) return;
-        setBridgeError(
+        setData(null);
+        setDataError(
           error instanceof ApiRequestError && error.needsAccessKey
             ? "Locked: access key required."
-            : "Bridge unreachable.",
+            : error instanceof ApiRequestError && error.code === "access_key_not_configured"
+              ? "Set JEANNIE_ACCESS_KEY: the data holds student records."
+              : "Hangeul data unreachable.",
         );
       });
     return () => controller.abort();
-  }, [statusReady, hasAccessKey, locked]);
+  }, [statusReady, configured, hasAccessKey, locked]);
 
-  const source = bridge?.source ?? mode;
+  const newest = data?.lastRuns.reduce<HangeulRunSummary | null>((a, r) => (!a || r.finishedAt > a.finishedAt ? r : a), null) ?? null;
+  const brief = data?.latestBrief;
+  // The latest brief is what DAILY REPORT shows; until the bot has sent one, name its latest report instead.
+  const report = brief ?? data?.latestReport ?? null;
+  const reportText = report
+    ? `${brief ? "Brief" : `No brief yet · ${reportName(report.report)}`} ${clockOf(report.read_at)}`
+    : "No brief yet";
+  const detail = data
+    ? `${reportText}${newest ? ` · ${jobName(newest.job)} ${clockOf(newest.finishedAt)}` : ""}`
+    : (dataError ?? "Hangeul BOT's data in Supabase");
+  const runsTitle = data?.lastRuns.map((r) => `${jobName(r.job)}: ${clockOf(r.finishedAt)} (${r.status ?? "?"})`).join("\n");
   return (
-    <HudPanel title="Hangeul Bridge" subtitle="한글 관리자" icon={<FileText />} delay={0.3}>
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1 space-y-0.5">
+    <HudPanel title="Hangeul Data" subtitle="한글 데이터" icon={<FileText />} delay={0.3}>
+      {/* Wraps in a narrow dock card: the button drops below the status instead of covering it. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-[10.5rem] flex-1 space-y-0.5">
           <p className="flex items-center gap-1.5 whitespace-nowrap font-mono text-[0.66rem] tracking-[0.12em] text-petal-soft">
             <span
-              className={cn("led", bridge ? (bridge.online ? "led-on" : "led-warn") : bridgeError ? "led-warn" : "")}
+              className={cn("led", data ? (newest?.status === "failed" ? "led-warn" : "led-on") : dataError ? "led-warn" : "")}
               aria-hidden="true"
             />
-            {bridge ? (bridge.online ? "ONLINE" : "OFFLINE") : bridgeError ? "NO SIGNAL" : "CHECKING…"}
-            {source ? (
+            {data ? "DATA LINKED" : dataError ? (configured === false ? "NOT LINKED" : "NO SIGNAL") : "CHECKING…"}
+            {data ? (
               <span className="rounded-sm border border-neon/30 px-1 text-[0.58rem] text-neon-hot">
-                {source === "live" ? "LIVE" : source === "mock-fallback" ? "FALLBACK" : "MOCK"}
+                {data.records.toLocaleString("en-US")} RECORDS
               </span>
             ) : null}
           </p>
-          <p className="truncate text-[0.7rem] text-petal-soft/65" title={bridge?.note ?? bridgeError ?? undefined}>
-            {bridgeError ??
-              (bridge?.latencyMs !== undefined
-                ? `Latency ${bridge.latencyMs} ms`
-                : (bridge?.note ?? "Admin reports & status checks"))}
+          <p className="truncate text-[0.7rem] text-petal-soft/65" title={runsTitle || dataError || undefined}>
+            {detail}
           </p>
         </div>
         <button
           type="button"
           onClick={onReport}
-          aria-label="Send the Hangeul daily report request to Jeannie"
+          disabled={offline}
+          title={offline ? OFFLINE_LINE.en : undefined}
+          aria-label="Ask Jeannie for the Hangeul daily brief"
           className="hud-btn hud-btn-primary shrink-0 px-2.5 font-mono text-[0.64rem] tracking-[0.12em]"
         >
           <Send aria-hidden="true" className="h-3.5 w-3.5" />
@@ -312,7 +379,10 @@ interface TacticalMetricsProps {
   onRetryStatus: () => void;
   hasAccessKey: boolean;
   lang: LangMode;
-  onCommand: (command: string) => void;
+  /** Sends a command through the chat; false when it was not sent (offline). */
+  onCommand: (command: string) => boolean | void;
+  /** Offline (spec D10): the smart-home tiles and DAILY REPORT are disabled, like the composer. */
+  offline?: boolean;
   telemetry: ChatTelemetry;
   messageCount: number;
   voiceEngine: TtsEngine | null;
@@ -325,7 +395,7 @@ interface TacticalMetricsProps {
   children?: ReactNode;
 }
 
-/** Left HUD column: capabilities, smart-home tiles, telemetry and the Hangeul bridge. */
+/** Left HUD column: capabilities, smart-home tiles, telemetry and the Hangeul data. */
 export function TacticalMetrics({
   status,
   statusLoading,
@@ -334,6 +404,7 @@ export function TacticalMetrics({
   hasAccessKey,
   lang,
   onCommand,
+  offline = false,
   telemetry,
   messageCount,
   voiceEngine,
@@ -353,7 +424,7 @@ export function TacticalMetrics({
         hasAccessKey={hasAccessKey}
       />
       <HudPanel title="Smart Home" subtitle="스마트홈" icon={<House />} delay={0.12}>
-        <IoTControlGrid lang={lang} onCommand={onCommand} />
+        <IoTControlGrid lang={lang} onCommand={onCommand} offline={offline} offlineText={OFFLINE_LINE.en} />
       </HudPanel>
       <TelemetryPanel
         telemetry={telemetry}
@@ -364,10 +435,11 @@ export function TacticalMetrics({
         dock={dock}
       />
       <HangeulPanel
-        mode={status?.hangeul.mode ?? null}
+        configured={status ? status.hangeul.configured : null}
         statusReady={!statusLoading}
         hasAccessKey={hasAccessKey}
         locked={Boolean(status?.accessKeyRequired) && !hasAccessKey}
+        offline={offline}
         onReport={() => onCommand("Hangeul daily report")}
       />
       {children}

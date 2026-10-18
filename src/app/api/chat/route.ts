@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { runOrchestrator } from "@/lib/agents/orchestrator";
-import { isTrustedRequest, requireAccess } from "@/lib/auth";
+import { hasValidAccessKey, isTrustedRequest, requireAccess } from "@/lib/auth";
+import { EMBEDDING_DIMENSIONS, readEmbedding } from "@/lib/hangeul/vectors";
 import { CHAT_HEADERS } from "@/lib/types";
 import { dataUrlByteLength, encodeHeaderJson, errorResponse, isImageDataUrl } from "@/lib/utils";
 
@@ -24,11 +25,21 @@ const messageSchema = z.object({
   image: imageSchema.nullish(),
 });
 
+// What the PWA computed on the device for a Hangeul question (spec §6): its vector and its own hits.
+const hangeulSchema = z.object({
+  embedding: z.union([z.array(z.number().finite()).length(EMBEDDING_DIMENSIONS), z.string().max(4_096)]).optional(),
+  hits: z
+    .array(z.object({ kind: z.string().min(1).max(40), key: z.string().min(1).max(512) }))
+    .max(24, "at most 24 hits")
+    .optional(),
+});
+
 const bodySchema = z
   .object({
     messages: z.array(messageSchema).min(1, "messages is empty").max(MAX_MESSAGES, `more than ${MAX_MESSAGES} messages`),
     image: imageSchema.nullish(),
     lang: z.enum(["auto", "en", "ko", "bilingual"]).optional(),
+    hangeul: hangeulSchema.optional(),
   })
   .superRefine((body, ctx) => {
     const last = body.messages.at(-1);
@@ -57,11 +68,22 @@ export async function POST(req: Request): Promise<Response> {
     return errorResponse(400, "invalid_request", `${where}${issue?.message ?? "invalid request body"}`);
   }
 
-  const { messages, image, lang } = parsed.data;
+  const { messages, image, lang, hangeul } = parsed.data;
+  if (hangeul?.embedding !== undefined && readEmbedding(hangeul.embedding) === null) {
+    return errorResponse(400, "invalid_request", "hangeul.embedding: expected 384 numbers or their base64 float32 form");
+  }
   try {
     const result = await runOrchestrator(
       { messages, image: image ?? null, lang },
-      { trusted: isTrustedRequest(req), signal: req.signal },
+      {
+        trusted: isTrustedRequest(req),
+        // Student records need the access key itself (like every /api/hangeul route): never the cron bearer.
+        hangeulAccess: hasValidAccessKey(req),
+        signal: req.signal,
+        hangeulDevice: hangeul
+          ? { embedding: hangeul.embedding !== undefined ? readEmbedding(hangeul.embedding) : null, hits: hangeul.hits ?? null }
+          : null,
+      },
     );
     const headers = new Headers({
       "content-type": "text/plain; charset=utf-8",

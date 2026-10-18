@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, isAbortError, openChatStream, readAccessKey } from "@/lib/client/api";
 import { parseEmote, type ReplyEmote } from "@/lib/emote";
-import type { AgentId, ChatMessage, LangMode, LlmProvider, ResolvedLang, SourceLink } from "@/lib/types";
+import type { AgentId, ChatMessage, HangeulDeviceHints, LangMode, LlmProvider, ResolvedLang, SourceLink } from "@/lib/types";
 
 export type HudMessageStatus = "streaming" | "done" | "stopped" | "error";
 
@@ -51,6 +51,32 @@ interface ChatOptions {
   onEmote?: (emote: ReplyEmote) => void;
   /** 401 access_key_required. `rejected` = a stored key was sent and refused. */
   onAccessKeyRequired?: (rejected: boolean) => void;
+  /**
+   * Hangeul questions and the device copy (ticket 7): an answer built on the
+   * device (shown at once, no request), or hints for the server (the device's
+   * question vector and search hits). Null for any other question.
+   */
+  prepareHangeul?: (input: { question: string; lang: LangMode; previous: string[] }) => Promise<HangeulAssist | null>;
+}
+
+export interface HangeulAssist {
+  answer?: { text: string; lang: ResolvedLang };
+  hints?: HangeulDeviceHints;
+}
+
+/** A device answer or hint that takes longer than this is skipped: the server answers instead. */
+const PREPARE_TIMEOUT_MS = 6_000;
+
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => null), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Contract limits are 50 messages / 20k chars; stay comfortably inside them.
@@ -157,8 +183,32 @@ export function useJeannieChat(options: ChatOptions) {
       };
 
       try {
+        const newest = history[history.length - 1];
+        let hints: HangeulDeviceHints | undefined;
+        const prepare = optionsRef.current.prepareHangeul;
+        if (prepare && !newest.image) {
+          const previous = history.slice(0, -1).flatMap((m) => (m.role === "user" ? [m.content] : []));
+          const assist = await withDeadline(prepare({ question: newest.content, lang: optionsRef.current.lang, previous }), PREPARE_TIMEOUT_MS);
+          if (controller.signal.aborted) throw new DOMException("Aborted by user", "AbortError");
+          if (assist?.answer) {
+            // Built on the device from the synced copy: shown at once, with its own "as of" line.
+            const latency = Math.round(performance.now() - started);
+            patch(assistantId, {
+              content: assist.answer.text,
+              agent: "hangeul",
+              lang: assist.answer.lang,
+              provider: "none",
+              status: "done",
+              latencyMs: latency,
+            });
+            setTelemetry((prev) => ({ ...prev, activeAgent: "hangeul", provider: "none", lastLatencyMs: latency, lastTtfbMs: latency }));
+            optionsRef.current.onReplyComplete?.({ text: assist.answer.text, lang: assist.answer.lang, agent: "hangeul" });
+            return;
+          }
+          hints = assist?.hints;
+        }
         const { meta, chunks } = await openChatStream(
-          { messages: history, lang: optionsRef.current.lang },
+          { messages: history, lang: optionsRef.current.lang, ...(hints ? { hangeul: hints } : {}) },
           controller.signal,
         );
         patch(assistantId, { agent: meta.agent, lang: meta.lang, provider: meta.provider, sources: meta.sources });

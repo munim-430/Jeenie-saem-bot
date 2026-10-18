@@ -17,9 +17,10 @@ import {
 import type { LangMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// Simulated smart-home tiles. Each tap flips the tile locally and sends the
-// matching natural-language command through the normal chat flow, where the
-// IoT Interceptor confirms it ("Yes, it is done." / "네, 처리되었습니다.").
+// Simulated smart-home tiles. Each tap sends the matching natural-language
+// command through the normal chat flow, where the IoT Interceptor confirms it
+// ("Yes, it is done." / "네, 처리되었습니다."), and flips the tile once it was
+// sent. Offline (spec D10) the tiles and the thermostat are disabled.
 
 type ToggleId = "lights" | "door" | "ac" | "fan" | "tv";
 
@@ -96,19 +97,39 @@ export function thermostatCommand(celsius: number, korean: boolean): string {
   return korean ? `온도를 ${celsius}도로 맞춰줘` : `Set the thermostat to ${celsius}°C`;
 }
 
+/**
+ * The tiles show what was sent: a tile flips only when its command went out.
+ * `send` returns false when nothing was sent (offline); the same state object
+ * then comes back, so the tile keeps its state.
+ */
+export function sendToggle<T extends string>(
+  on: Readonly<Record<T, boolean>>,
+  id: T,
+  command: (next: boolean) => string,
+  send: (command: string) => boolean | void,
+): Readonly<Record<T, boolean>> {
+  const next = !on[id];
+  return send(command(next)) === false ? on : { ...on, [id]: next };
+}
+
 const MIN_TEMP = 16;
 const MAX_TEMP = 30;
 const THERMOSTAT_DEBOUNCE_MS = 700;
 
 interface IoTControlGridProps {
   lang: LangMode;
-  onCommand: (command: string) => void;
+  /** Sends the command through the chat; false when it was not sent (offline), so the tile does not flip. */
+  onCommand: (command: string) => boolean | void;
+  /** Offline (spec D10): nothing can be sent, so every tile and the thermostat are disabled. */
+  offline?: boolean;
+  /** Why the controls are disabled (the offline line), as their tooltip. */
+  offlineText?: string;
 }
 
 const tileBase =
   "relative flex min-h-[70px] min-w-0 flex-col justify-between gap-1 overflow-hidden rounded-md border p-2 text-left transition-colors";
 
-export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
+export function IoTControlGrid({ lang, onCommand, offline = false, offlineText }: IoTControlGridProps) {
   const [on, setOn] = useState<Record<ToggleId, boolean>>({
     lights: true,
     door: true,
@@ -118,6 +139,8 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
   });
   const [temp, setTemp] = useState(22);
   const tempTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The last thermostat setting that was sent: shown again when a debounced send finds the HUD offline. */
+  const sentTemp = useRef(22);
   const korean = lang === "ko";
 
   useEffect(
@@ -128,18 +151,22 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
   );
 
   const toggle = (device: ToggleDevice) => {
-    const next = !on[device.id];
-    setOn((prev) => ({ ...prev, [device.id]: next }));
-    onCommand(device.command(next, korean));
+    if (offline) return;
+    const next = sendToggle(on, device.id, (value) => device.command(value, korean), onCommand);
+    if (next !== on) setOn(next);
   };
 
   // Rapid +/- taps settle into a single command.
   const nudge = (delta: number) => {
+    if (offline) return;
     const next = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + delta));
     if (next === temp) return;
     setTemp(next);
     if (tempTimer.current) clearTimeout(tempTimer.current);
-    tempTimer.current = setTimeout(() => onCommand(thermostatCommand(next, korean)), THERMOSTAT_DEBOUNCE_MS);
+    tempTimer.current = setTimeout(() => {
+      if (onCommand(thermostatCommand(next, korean)) === false) setTemp(sentTemp.current);
+      else sentTemp.current = next;
+    }, THERMOSTAT_DEBOUNCE_MS);
   };
 
   const renderToggle = (device: ToggleDevice, span: string) => {
@@ -149,8 +176,10 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
       <motion.button
         key={device.id}
         type="button"
-        whileTap={{ scale: 0.97 }}
+        whileTap={offline ? undefined : { scale: 0.97 }}
         onClick={() => toggle(device)}
+        disabled={offline}
+        title={offline ? offlineText : undefined}
         aria-pressed={active}
         aria-label={`${device.name}: ${active ? device.onLabel : device.offLabel}. Tap to ${active ? "switch off" : "switch on"}.`}
         className={cn(
@@ -159,6 +188,7 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
           active
             ? "border-neon/80 bg-gradient-to-br from-neon/25 to-neon/5 shadow-[0_0_18px_rgba(255,0,127,0.35),inset_0_0_14px_rgba(255,0,127,0.2)]"
             : "border-neon/20 bg-void/50 hover:border-neon/50 hover:bg-neon/5",
+          offline && "cursor-not-allowed opacity-50",
         )}
       >
         <span className="flex items-center justify-between gap-1">
@@ -210,7 +240,8 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
           <button
             type="button"
             onClick={() => nudge(-1)}
-            disabled={temp <= MIN_TEMP}
+            disabled={offline || temp <= MIN_TEMP}
+            title={offline ? offlineText : undefined}
             aria-label="Lower thermostat by one degree"
             className="hud-btn h-10 w-10 min-w-0 p-0"
           >
@@ -225,7 +256,8 @@ export function IoTControlGrid({ lang, onCommand }: IoTControlGridProps) {
           <button
             type="button"
             onClick={() => nudge(1)}
-            disabled={temp >= MAX_TEMP}
+            disabled={offline || temp >= MAX_TEMP}
+            title={offline ? offlineText : undefined}
             aria-label="Raise thermostat by one degree"
             className="hud-btn h-10 w-10 min-w-0 p-0"
           >
