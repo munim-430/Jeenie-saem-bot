@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Lock, LockOpen } from "lucide-react";
 import { formatClock, useNow } from "@/hooks/useNow";
+import type { DesktopLayout } from "@/lib/avatar/view-mode";
 import type { SystemStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +12,54 @@ interface HudHeaderProps {
   statusError: string | null;
   hasAccessKey: boolean;
   onAccessKey: () => void;
+  /** Wide desktop only: the 1 | 2 switch between the classic HUD and the avatar layout. */
+  desktopLayout?: DesktopLayout;
+  onDesktopLayoutChange?: (layout: DesktopLayout) => void;
+}
+
+const LAYOUT_OPTIONS: { value: DesktopLayout; label: string; title: string }[] = [
+  { value: "hud", label: "1 HUD", title: "Option 1: classic HUD" },
+  { value: "avatar", label: "2 Avatar", title: "Option 2: Jeannie in the left frame" },
+];
+
+function LayoutSwitch({ value, onChange }: { value: DesktopLayout; onChange: (layout: DesktopLayout) => void }) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Desktop view"
+      className="inline-flex rounded-md border border-neon/35 bg-void/60 p-0.5"
+      onKeyDown={(event) => {
+        if (["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          onChange(value === "hud" ? "avatar" : "hud");
+        }
+      }}
+    >
+      {LAYOUT_OPTIONS.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            title={option.title}
+            aria-label={option.title}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "min-h-[36px] rounded px-2.5 font-mono text-[0.68rem] font-semibold tracking-[0.12em] transition-all",
+              selected
+                ? "bg-neon text-white shadow-glow-sm"
+                : "text-petal-soft/70 hover:bg-neon/15 hover:text-petal-soft",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -40,7 +89,14 @@ function LogoMark() {
   );
 }
 
-export function HudHeader({ status, statusError, hasAccessKey, onAccessKey }: HudHeaderProps) {
+export function HudHeader({
+  status,
+  statusError,
+  hasAccessKey,
+  onAccessKey,
+  desktopLayout,
+  onDesktopLayoutChange,
+}: HudHeaderProps) {
   const now = useNow(1000);
   const locked = Boolean(status?.accessKeyRequired) && !hasAccessKey;
 
@@ -117,6 +173,9 @@ export function HudHeader({ status, statusError, hasAccessKey, onAccessKey }: Hu
             {now ? dateFormatter.format(now) : " "}
           </p>
         </div>
+        {desktopLayout && onDesktopLayoutChange ? (
+          <LayoutSwitch value={desktopLayout} onChange={onDesktopLayoutChange} />
+        ) : null}
         <button
           type="button"
           onClick={onAccessKey}

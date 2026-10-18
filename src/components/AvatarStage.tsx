@@ -7,10 +7,11 @@ import {
   CLIP_NAMES,
   DEFAULT_CLIPS,
   ESSENTIAL_CLIPS,
-  clipNameFor,
+  OUTFITS,
+  type ClipName,
   type ClipTable,
 } from "@/lib/avatar/clips";
-import { IDLE_SEQUENCE, shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
+import { IDLE_SEQUENCE, clipOf, shouldDeferCue, type ClipCue } from "@/lib/avatar/director";
 import { INITIAL_GATE, atRest, gateStep, nextRest } from "@/lib/avatar/voice-gate";
 import { cn } from "@/lib/utils";
 
@@ -46,18 +47,20 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
   // The cue on screen now (it may lag `cue` while a one-shot waits for idle's loop point).
   const shownCueRef = useRef<ClipCue | null>(null);
   const onEndedRef = useRef(onEnded);
+  // Bumped on every change of outfit on screen: replays the sparkle that hides the swap.
+  const [sparkle, setSparkle] = useState(0);
 
   useEffect(() => {
     onEndedRef.current = onEnded;
   });
 
-  const info = clips[clipNameFor(cue.emote)];
-  const { emote, key, loop } = cue;
+  const info = clips[clipOf(cue)];
+  const { emote, outfit, key, loop } = cue;
 
   useEffect(() => {
     const videos = [videoA.current, videoB.current] as const;
     cueKeyRef.current = key;
-    const next: ClipCue = { emote, key, loop, focus: false };
+    const next: ClipCue = { emote, outfit, key, loop, focus: false };
     let cancelled = false;
     let pauseTimer: ReturnType<typeof setTimeout> | undefined;
     let release: (() => void) | undefined;
@@ -69,6 +72,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
       const video = videos[target];
       if (!video) return;
       loadedKeys.current[target] = key;
+      if (shownCueRef.current && shownCueRef.current.outfit !== outfit) setSparkle((n) => n + 1);
       shownCueRef.current = next;
       // React only sets `muted` as a property after mount; autoplay needs it before play().
       video.muted = true;
@@ -109,15 +113,16 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
       clearTimeout(pauseTimer);
       release?.();
     };
-  }, [emote, key, loop, info.src, info.poster]);
+  }, [emote, outfit, key, loop, info.src, info.poster]);
 
   // Mouth rests while her voice pauses: during a silence the talking loop runs on to the next
   // frame where her mouth is closed or barely parted and holds there, then plays on when the
   // voice comes back. Only with a measured level; the synthetic one would gate on noise.
-  const rests = clips.talking.rests;
-  const talkingShown = emote === "talking";
+  // Every outfit's talking loop carries its own rests.
+  const rests = emote === "talking" ? info.rests : undefined;
+  const talkingKey = emote === "talking" ? key : null;
   useEffect(() => {
-    if (!talkingShown || !voiceMeasured || !voiceLevel || !rests?.length) return;
+    if (!talkingKey || !voiceMeasured || !voiceLevel || !rests?.length) return;
     let raf = 0;
     let gate = INITIAL_GATE;
     let rest: number | null = null;
@@ -125,7 +130,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     const tick = () => {
       gate = gateStep(gate, voiceLevel(), performance.now());
       const video = (frontRef.current === 0 ? videoA : videoB).current;
-      if (video && shownCueRef.current?.key === "talking") {
+      if (video && shownCueRef.current?.key === talkingKey) {
         if (gate.silent && !video.paused) {
           rest ??= nextRest(rests, video.currentTime);
           if (rest !== null && atRest(video.currentTime, rest)) {
@@ -145,7 +150,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     raf = requestAnimationFrame(tick);
     // Leaving talking mid-rest needs nothing: the next talking cue restarts the clip.
     return () => cancelAnimationFrame(raf);
-  }, [talkingShown, voiceMeasured, voiceLevel, rests]);
+  }, [talkingKey, voiceMeasured, voiceLevel, rests]);
 
   // Warm the HTTP / service-worker cache so later clips start instantly: the clips
   // every state needs first, then the idle sequence and the rest a couple at a time so a phone on mobile
@@ -154,19 +159,22 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
     const controller = new AbortController();
     // Read the whole body: fetch() resolves at the headers, and the limit below only
     // holds if a worker waits for the download itself.
-    const warm = (name: (typeof CLIP_NAMES)[number]) =>
+    const warm = (name: ClipName) =>
       fetch(clips[name].src, { signal: controller.signal })
         .then((res) => res.blob())
         .then(
           () => undefined,
           () => undefined,
         );
-    // The idle sequence plays right after the greeting, so its clips come first.
-    const sequence: readonly (typeof CLIP_NAMES)[number][] = IDLE_SEQUENCE;
-    const rest = [
-      ...sequence,
-      ...CLIP_NAMES.filter((name) => !ESSENTIAL_CLIPS.includes(name) && !sequence.includes(name)),
+    // The outfit idles are small and make the wardrobe button instant, and the idle sequence plays
+    // right after the greeting, so both come straight after the essential clips; the outfit
+    // talking loops follow, before the rest of the emotes.
+    const early: readonly ClipName[] = [
+      ...OUTFITS.map((o) => clipOf({ emote: "idle", outfit: o })),
+      ...IDLE_SEQUENCE,
+      ...OUTFITS.map((o) => clipOf({ emote: "talking", outfit: o })),
     ];
+    const rest = [...new Set([...early, ...CLIP_NAMES])].filter((name) => !ESSENTIAL_CLIPS.includes(name));
     const worker = async () => {
       for (let name = rest.shift(); name && !controller.signal.aborted; name = rest.shift()) await warm(name);
     };
@@ -237,6 +245,7 @@ export function AvatarStage({ cue, clips, onEnded, voiceLevel, voiceMeasured = f
         />
       ))}
       <div className="avatar-vignette" />
+      {sparkle > 0 ? <div key={sparkle} className="avatar-sparkle" /> : null}
     </div>
   );
 }

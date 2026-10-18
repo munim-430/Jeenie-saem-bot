@@ -40,8 +40,8 @@ function main() {
       ...entry,
       src: `${entry.src}?v=${CLIP_VERSION}`,
       poster: `${entry.poster}?v=${CLIP_VERSION}`,
-      // Talking pauses on these frames while her voice is silent (mouth closed or barely parted).
-      ...(name === "talking" ? { rests: mouthRestTimes(out) } : {}),
+      // Talking loops pause on these frames while her voice is silent (mouth closed or barely parted).
+      ...(name === "talking" || name.startsWith("talking_") ? { rests: mouthRestTimes(out) } : {}),
       source: "kling",
     };
   }

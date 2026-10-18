@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LayoutDashboard, Mic, MicOff } from "lucide-react";
 import { AvatarStage } from "@/components/AvatarStage";
+import { WardrobeButton } from "@/components/WardrobeButton";
 import { EmotePicker } from "@/components/EmotePicker";
 import type { AvatarDirector } from "@/hooks/useAvatarDirector";
 import { useHoldToTalk } from "@/hooks/useHoldToTalk";
+import { INITIAL_DIRECTOR, cueOf } from "@/lib/avatar/director";
 import type { SpeechRecognitionState } from "@/hooks/useSpeechRecognition";
 import { OFFLINE_LINE } from "@/lib/client/reachability";
 import { cn } from "@/lib/utils";
@@ -33,7 +35,6 @@ interface AvatarScreenProps {
 
 /** QA "voice test": 1.2 s of voice, 0.8 s of silence, four times over. */
 const VOICE_TEST_PATTERN_MS = { on: 1200, off: 800, cycles: 4 };
-const TALKING_CUE = { emote: "talking", key: "talking", loop: true, focus: false } as const;
 
 export function AvatarScreen({
   director,
@@ -51,6 +52,8 @@ export function AvatarScreen({
   // Preview-only QA: plays talking against a scripted voice level so the mouth rests can be
   // checked on a phone without waiting for a real spoken reply.
   const [voiceTest, setVoiceTest] = useState(false);
+  // The talking loop of the outfit she is wearing.
+  const talkingCue = useMemo(() => cueOf({ ...INITIAL_DIRECTOR, base: "talking", outfit: director.outfit }), [director.outfit]);
   const voiceTestStart = useRef(0);
   const startVoiceTest = useCallback(() => {
     voiceTestStart.current = performance.now();
@@ -81,7 +84,7 @@ export function AvatarScreen({
     <div className="avatar-screen fixed inset-0 z-20 overflow-hidden">
       <AvatarStage
         className="absolute inset-0"
-        cue={voiceTest ? TALKING_CUE : director.cue}
+        cue={voiceTest ? talkingCue : director.cue}
         clips={director.clips}
         onEnded={director.ended}
         voiceLevel={voiceTest ? testLevel : voiceLevel}
@@ -102,15 +105,19 @@ export function AvatarScreen({
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-        <button
-          type="button"
-          className="avatar-fab avatar-fab-sm"
-          onClick={onSwitchToHud}
-          aria-label="Switch to HUD view"
-          title="HUD view"
-        >
-          <LayoutDashboard className="h-5 w-5" aria-hidden="true" />
-        </button>
+        {/* Small controls grouped bottom-left, clear of her feet; the mic stays big on the right. */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="avatar-fab avatar-fab-sm"
+            onClick={onSwitchToHud}
+            aria-label="Switch to HUD view"
+            title="HUD view"
+          >
+            <LayoutDashboard className="h-[1.1rem] w-[1.1rem]" aria-hidden="true" />
+          </button>
+          <WardrobeButton director={director} className="avatar-fab-sm" align="left" />
+        </div>
 
         <button
           type="button"

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, isAbortError, requestSpeech } from "@/lib/client/api";
+import { releaseAudioUrl } from "@/lib/client/audio-url";
 import { speechSegments, type SpeechLang, type SpeechSegment } from "@/lib/client/speech-text";
 import type { ResolvedLang, TtsEngine } from "@/lib/types";
 
@@ -339,7 +340,7 @@ export function useSpeechOutput({ serverVoice = true }: SpeechOutputOptions = {}
         return signal.aborted ? "played" : "fallback"; // autoplay refusal or decode error → browser voice
       } finally {
         endPlayback();
-        URL.revokeObjectURL(url);
+        releaseAudioUrl(element, url);
         if (currentAudioRef.current === element) currentAudioRef.current = null;
       }
     },

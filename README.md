@@ -31,6 +31,7 @@ Also included:
 - **Voice out:** ElevenLabs first, then Microsoft Edge neural voices (`en-US-JennyNeural`, `ko-KR-SunHiNeural`, no API key needed), then the browser's built-in speech. The audio drives the orb and the spectrum visualizer.
 - **Voice in:** push-to-talk speech recognition in English or Korean, using the browser's Web Speech API.
 - **HUD:** a canvas arc-reactor orb, a spectrum analyzer, a translucent chat terminal, tactical telemetry, IoT control tiles, and a camera scanner.
+- **Desktop views (1280px and wider):** the header's **1 HUD | 2 Avatar** switch picks the layout. Option 2 (the default) puts Jeannie full-body in the left frame with a hold-to-talk mic and emote buttons, the chat on the right and the panels in a bottom dock; Option 1 is the classic HUD with the reactor orb. The choice is remembered per browser.
 - **Telegram bridge:** two-way bot. Chat with Jeannie, send photos for analysis, run `/report`, `/search`, and `/status`.
 - **Language modes:** Auto-detect, English, Korean, or bilingual (English then Korean). You can also ask for "both languages" in any message.
 - **Honorifics:** replies call you 부장님 by default and 자기야 when the message is personal (tiredness, missing her, good night). Audit, Hangeul, search, vision and smart-home replies always use 부장님. Greetings use 부장님 from 09:00 to 18:00 local time and 자기야 otherwise.
@@ -273,31 +274,11 @@ configured (503).
 
 ## Project layout
 
-```
-src/
-├── app/
-│   ├── api/{chat,search,tts,hangeul,status,session,memory}/route.ts
-│   ├── api/hangeul/{snapshot,changes,runs,ask}/route.ts
-│   ├── api/telegram/webhook/route.ts
-│   ├── layout.tsx · page.tsx · globals.css · manifest.ts   # the pink hologram HUD, the PWA manifest
-├── components/   HologramOrb · VoiceVisualizer · ChatTerminal · TacticalMetrics · MemoryPanel · CameraScanner
-│                 OfflineBanner · HangeulSyncPanel · HangeulSyncNotice
-├── hooks/        chat streaming, voice output, speech recognition, online status, the Hangeul device copy
-└── lib/
-    ├── agents/   orchestrator · iot-interceptor · search-agent · vision-agent
-    │             tts-engine · edge-tts · llm · persona · etiquette · audit-flow
-    ├── hangeul/  router · answer (isomorphic, code-built answers) · store (PostgREST) · respond · filter · days · vectors
-    ├── memory/   chunk (markdown/JSONL chunking, secret guard, search terms) · store · supabase
-    ├── client/   typed fetch wrappers for the HUD, reachability
-    │   └── hg-local/  the Hangeul device copy: db (IndexedDB) · sync · search · check · ask · embed.worker
-    └── env.ts · auth.ts · telegram.ts · types.ts · utils.ts
-public/sw.js      the service worker (app shell and avatar clips; never /api/*)
-tests/            Vitest suites for agents and routes
-supabase/migrations/  memory tables, search function, audit state, the Hangeul context
-supabase/functions/hg-embed/  question embeddings for Hangeul search (Edge Function)
-```
+The full map of the repo, the site map, every Python program, the data flow (what is collected, where it goes
+and why, with risks) and a module-by-module code reference are in [`docs/`](docs/README.md).
 
-The brief lists `api/telegram/webhook.ts`. In the App Router a route must be a `route.ts` file, so it lives at `api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
+Route files follow the App Router convention: the brief's `api/telegram/webhook.ts` lives at
+`api/telegram/webhook/route.ts` and serves the same `/api/telegram/webhook` URL.
 
 ## Agent skills
 

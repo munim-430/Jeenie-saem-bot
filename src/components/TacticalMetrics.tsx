@@ -197,18 +197,26 @@ function TelemetryPanel({
   voiceEngine,
   replyLang,
   sessionStart,
+  dock,
 }: {
   telemetry: ChatTelemetry;
   messageCount: number;
   voiceEngine: TtsEngine | null;
   replyLang: ResolvedLang | null;
   sessionStart: number | null;
+  dock?: boolean;
 }) {
   const now = useNow(1000);
   const placeholder = "--:--:--";
   return (
     <HudPanel title="Telemetry" subtitle="원격 측정" icon={<Activity />} delay={0.2}>
-      <dl className="grid grid-cols-3 gap-1.5 lg:grid-cols-2 xl:grid-cols-3">
+      <dl
+        className={cn(
+          "grid grid-cols-3 gap-1.5",
+          // The dock's cards are narrower than the classic column: three columns only on very wide screens.
+          dock ? "lg:grid-cols-2 min-[1700px]:grid-cols-3" : "lg:grid-cols-2 xl:grid-cols-3",
+        )}
+      >
         <Readout label="Local" value={now ? formatClock(now) : placeholder} />
         <Readout label="Seoul KST" value={now ? formatClock(now, "Asia/Seoul") : placeholder} />
         <Readout
@@ -329,8 +337,9 @@ function HangeulPanel({
   const runsTitle = data?.lastRuns.map((r) => `${jobName(r.job)}: ${clockOf(r.finishedAt)} (${r.status ?? "?"})`).join("\n");
   return (
     <HudPanel title="Hangeul Data" subtitle="한글 데이터" icon={<FileText />} delay={0.3}>
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1 space-y-0.5">
+      {/* Wraps in a narrow dock card: the button drops below the status instead of covering it. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-[10.5rem] flex-1 space-y-0.5">
           <p className="flex items-center gap-1.5 whitespace-nowrap font-mono text-[0.66rem] tracking-[0.12em] text-petal-soft">
             <span
               className={cn("led", data ? (newest?.status === "failed" ? "led-warn" : "led-on") : dataError ? "led-warn" : "")}
@@ -380,6 +389,8 @@ interface TacticalMetricsProps {
   replyLang: ResolvedLang | null;
   sessionStart: number | null;
   className?: string;
+  /** Laid out as the desktop avatar view's bottom dock rather than the classic left column. */
+  dock?: boolean;
   /** Extra panels at the bottom of the column (the memory panel). */
   children?: ReactNode;
 }
@@ -400,6 +411,7 @@ export function TacticalMetrics({
   replyLang,
   sessionStart,
   className,
+  dock,
   children,
 }: TacticalMetricsProps) {
   return (
@@ -420,6 +432,7 @@ export function TacticalMetrics({
         voiceEngine={voiceEngine}
         replyLang={replyLang}
         sessionStart={sessionStart}
+        dock={dock}
       />
       <HangeulPanel
         configured={status ? status.hangeul.configured : null}
